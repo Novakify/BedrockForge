@@ -824,7 +824,7 @@ float3 weather(float3 rd, float dist, float t, float night) {
         float per = mode == 0 ? 9.0 : mode == 1 ? 5.0 : 7.0;
         float yy = y + t * sp * (0.85 + 0.3 * h2) + h * per;
         float ph = frac(yy / per) * per;                          // where in its drop period this ray is
-        float width = (mode == 0 ? 0.08 : mode == 1 ? 0.30 : 0.11) * wx0.w / (1.0 + float(k) * 0.4);
+        float width = (mode == 0 ? 0.08 : mode == 1 ? 0.30 : 0.15) * wx0.w / (1.0 + float(k) * 0.4);
         float len   = (mode == 0 ? 0.9 : mode == 1 ? 0.12 : 0.35 + 1.1 * h2 * h2) * wx0.w * (1.2 - 0.15 * float(k));
         float across = exp(-pow(fu / width, 2.0)) * smoothstep(0.5, 0.36, abs(fu));   // zero at the column edge (no seams)
         float along  = mode == 0 ? smoothstep(0.0, 0.25, ph) * smoothstep(len, len * 0.6, ph)
@@ -837,7 +837,7 @@ float3 weather(float3 rd, float dist, float t, float night) {
             float fl = 0.75 + 0.25 * sin(t * 9.0 + h * 40.0);
             float3 ec = lerp(float3(0.85, 0.12, 0.02), float3(1.0, 0.55, 0.12), pow(saturate(1.0 - ph / len), 2.0));
             float  glow = exp(-pow(fu / (width * 3.5), 2.0)) * smoothstep(0.5, 0.3, abs(fu));
-            L += (ec * (across * along * 1.4 + glow * along * 0.25) + float3(1.0, 0.85, 0.55) * across * head * 1.6) * fade * fl;
+            L += (ec * (across * along * 1.6 + glow * along * 0.45) + float3(1.0, 0.85, 0.55) * across * head * 1.6) * fade * fl;
             // sparks: tiny dim dots in the empty columns, drifting slower
             float sph = frac((y + t * 1.3 + h * 13.0) / 3.0) * 3.0;
             float spk = exp(-pow(fu / (width * 0.6), 2.0)) * exp(-pow((sph - 1.5) / 0.035, 2.0)) * step(0.75, h);
@@ -1150,29 +1150,44 @@ float2 lavaCell(float2 p) {                                  // x = distance to 
     return float2(d2 - d1, id);
 }
 float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
+    // (Fernando 2026-11-19: v1 "super ugly, pale" - a regular turtle-shell web of big plates and thin veins. The
+    //  reference is the other way round: the ground is mostly GLOWING orange magma, broken by small irregular black
+    //  crust flakes, hot yellow where it is thinnest, and the light of it climbs the walls.)
     if (dist > wx1.x * 3.0) return L;
     float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
     float nl = length(n);
     if (nl < 1e-6) return L;
     n /= nl; if (dot(n, rd) > 0.0) n = -n;
-    float up = smoothstep(0.75, 0.93, n.y);
-    if (up <= 0.0) return L;
     float3 wp = c5.xyz + P;
-    float  k  = wx1.y * up * smoothstep(wx1.x * 3.0, wx1.x * 1.5, dist);
-    float2 uv = wp.xz * 2.1 + float2(vnoise2(wp.xz * 0.7), vnoise2(wp.xz * 0.7 + 5.3)) * 0.45;   // wobbly plates
-    float2 c  = lavaCell(uv);
-    float2 c2 = lavaCell(uv * 2.3 + 7.1);                        // finer cracks inside the plates
-    float  heat = 0.65 + 0.35 * sin(t * 1.7 + c.y * 25.0 + vnoise2(wp.xz * 0.5 + t * 0.2) * 6.0);
-    float  aa = 0.004 * dist + 0.01;
-    float  vein  = 1.0 - smoothstep(0.0, 0.05 + aa, c.x);
-    float  vein2 = (1.0 - smoothstep(0.0, 0.025 + aa, c2.x)) * 0.45;
-    float  pool  = smoothstep(0.70, 0.86, vnoise2(wp.xz * 0.45 + 11.0)) * 0.6;   // thin crust: molten
-    float  hot   = saturate(max(vein, vein2) + pool) * heat;
-    float  lum   = dot(L, float3(0.3, 0.55, 0.15));
-    float3 crust = float3(0.30, 0.25, 0.24) * lum * 0.45 + float3(0.035, 0.012, 0.008);   // the ground's light, charred grey
-    float3 lava  = lerp(float3(0.75, 0.10, 0.01), float3(1.0, 0.50, 0.10), saturate(hot * 1.3 - 0.4)) * (0.9 + 0.8 * hot);
-    float3 glowRim = float3(0.45, 0.07, 0.01) * (1.0 - smoothstep(0.0, 0.18, c.x)) * heat * 0.35;   // the crust glows near a vein
-    return lerp(L, crust + glowRim + lava * hot, k);
+    float  kd = wx1.y * smoothstep(wx1.x * 3.0, wx1.x * 1.5, dist);
+    float up = smoothstep(0.75, 0.93, n.y);
+    // the glow of the ground on walls / bodies near it (height above your feet)
+    float hgt = max(wp.y - (c5.y + pl.y), 0.0);
+    float3 bounce = float3(1.0, 0.38, 0.08) * exp(-hgt * 0.55) * (1.0 - up);
+    float3 o = L * (0.78 + bounce * 1.6) * float3(1.0, 0.86, 0.80);      // the scene warms and darkens a touch
+    if (up <= 0.0) return lerp(L, o, kd);
+    // (looked again at the reference zoomed in: lava lies in big RAGGED PATCHES over the street, the plain ground dark
+    //  between them; inside a patch it is a fine granular magma - small bright orange-red flecks, each its own shade,
+    //  split by thin dark cracks; a few flecks crusted black)
+    float  big  = vnoise2(wp.xz * 0.32 + 4.0) * 0.65 + vnoise2(wp.xz * 0.9 + 9.0) * 0.35;
+    float  rag  = vnoise2(wp.xz * 5.0) - 0.5;
+    float  cover = smoothstep(0.40, 0.47, big + rag * 0.12);
+    float2 w2 = float2(vnoise2(wp.xz * 2.1), vnoise2(wp.xz * 2.1 + 5.3));
+    float2 uv = wp.xz * 6.5 + w2 * 0.8;
+    float  aa = 0.004 * dist + 0.012;
+    float  n1 = vnoise2(uv * 0.9) * 0.55 + vnoise2(uv * 2.1 + 3.0) * 0.30 + vnoise2(uv * 4.7 + 7.0) * 0.15;   // organic blobs, not cells
+    float  fleck = smoothstep(0.36, 0.46 + aa * 2.0, n1);
+    float  heat = 0.75 + 0.25 * sin(t * 1.6 + vnoise2(wp.xz * 1.1 + t * 0.2) * 7.0);
+    float  crustN = vnoise2(uv * 0.35 + 11.0);
+    float  dark = smoothstep(0.62, 0.72, crustN + 0.25 * smoothstep(0.47, 0.40, big + rag * 0.12));   // crusted, more at patch edges
+    float  v = saturate((n1 - 0.40) * 2.6);
+    float3 fc = lerp(float3(0.62, 0.07, 0.01), float3(1.0, 0.38, 0.04), v);
+    fc = lerp(fc, float3(1.0, 0.68, 0.24), smoothstep(0.72, 0.9, n1) * 0.85);   // white-hot peaks
+    float3 magma = fc * fleck * (1.0 - dark) * (0.8 + 0.7 * heat) + float3(0.04, 0.012, 0.008) * max(dark, 1.0 - fleck);
+    magma += float3(0.20, 0.03, 0.0) * (1.0 - fleck) * (1.0 - dark) * heat;   // the gaps glow faintly
+    float3 groundD = o * 0.55;                                          // the street between patches, in shadow
+    float3 g = lerp(groundD, magma, cover);
+    return lerp(L, lerp(o, g, up), kd);
 }
 float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, float night) {
     if (dist > wx1.x * 3.0) return L;
@@ -1534,7 +1549,10 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         [branch] if (!sky && wx1.y > 0.0) outL = wetGround(outL, int2(px), q, rd, dist, t, night);
         outL = lightning(outL, rd, sky);
     }
-    [branch] if (wx1.w > 0.5 && wx0.x > 1.5 && !sky && wx1.y > 0.0) outL = lavaGround(outL, int2(px), q, rd, dist, t);
+    [branch] if (wx1.w > 0.5 && wx0.x > 1.5 && wx1.y > 0.0) {
+        if (!sky) outL = lavaGround(outL, int2(px), q, rd, dist, t);
+        else outL = outL * float3(0.8, 0.7, 0.75) + float3(0.35, 0.07, 0.01) * exp(-max(rd.y, 0.0) * 9.0) * wx1.y;   // the sky glows red low down
+    }
     [branch] if (wx1.w > 0.5) outL += weather(rd, sky ? 1e4 : dist, t, night);
     float3 o = sqrt(max(outL + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
 #if ATMOS_DEPTH
