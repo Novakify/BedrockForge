@@ -1125,10 +1125,13 @@ bool isActorPso(ID3D12PipelineState* pso) {
     std::lock_guard l(gMutex);
     return gActor.count(pso) != 0;
 }
-bool itemsTracing() { return itemsOn(); }
+// (perf audit 2026-11-19: the item trace took the glass lock - twice - on EVERY indexed draw of the frame while Items
+//  was on, thousands a frame on the Hive. Diagnostics only: on while config/GlassTrace.txt exists, checked every 5 s.)
+std::atomic<bool> gTraceItems{false};
+bool itemsTracing() { return gTraceItems.load(std::memory_order_relaxed) && itemsOn(); }
 void traceItemReplay(int what) { if (what >= 0 && what < 4) ++gItemReplay[what]; }
 void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed, unsigned rtW, unsigned rtH) {
-    if (!itemsOn()) return;
+    if (!itemsTracing()) return;
     std::lock_guard l(gMutex);
     auto it = gListPso.find(list);
     if (it == gListPso.end()) return;
@@ -2184,6 +2187,7 @@ void pumpTiming(ID3D12Device* dev, ID3D12CommandQueue* q) {
             }
     int64_t const now = int64_t(GetTickCount64());
     if (now - lastLog < 5000) return;
+    {   std::error_code ec; gTraceItems = fs::exists(gConfigFile.parent_path() / "GlassTrace.txt", ec); }
     if (gFlushes && frames) {
         gShowCpuMs   = float(gCpuMs / double(frames));
         gShowGpuMs   = gGpuPairs ? float(gGpuMs / double(frames)) : -1.f;
