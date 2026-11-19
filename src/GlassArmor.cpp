@@ -981,6 +981,9 @@ ComPtr<ID3D12PipelineState> makeItemPso(ID3D12Device* dev, ActorDesc const& ad, 
     auto& rt = d.BlendState.RenderTarget[0];
     rt.BlendEnable = FALSE, rt.LogicOpEnable = FALSE, rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    // the game's item now draws first (never invisible) and the glass lands on the same depth over it
+    d.DepthStencilState.DepthEnable    = TRUE;
+    d.DepthStencilState.DepthFunc      = D3D12_COMPARISON_FUNC_LESS_EQUAL;
     d.DepthStencilState.StencilEnable  = FALSE;
     d.RasterizerState.CullMode         = D3D12_CULL_MODE_NONE;
     ComPtr<ID3D12PipelineState> p;

@@ -880,7 +880,7 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
                                                            : rf::glassarmor::extendedRoot(p.root.sig, &base);
         if (!ext) { // can't draw glass this time: draw the vanilla armor instead (never invisible)
             ++gGaFallback;
-            if (p.item) rf::glassarmor::traceItemReplay(1);
+            if (p.item) { rf::glassarmor::traceItemReplay(1); continue; }   // the game's item already drew (drawIdxHook)
             gaSetRoot(l, p.root, p.root.sig);
             gaSetIa(l, p.ia);
             reinterpret_cast<SetPso_t>(gOrig[3])(l, p.game);
@@ -1062,13 +1062,18 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
             p.skin  = gd.skin;
             p.a = a, p.b = b, p.c = c, p.d = d, p.e = e;
             bool const item = p.item;
+            bool queued = false;
             {
                 std::lock_guard g(gGaMutex);
                 auto& gl = gGa[list];
                 p.ia     = gl.ia;
-                if (p.root.sig && gl.ia.haveIb) gl.pending.push_back(std::move(p));
+                if (p.root.sig && gl.ia.haveIb) { gl.pending.push_back(std::move(p)); queued = true; }
                 else if (item) rf::glassarmor::traceItemReplay(2);
             }
+            // never invisible (handoff 2026-11-18: "on Hive the held item is INVISIBLE - an empty hand is worse than no
+            // glass"): a draw that couldn't be queued draws as the game's own; a held item ALWAYS draws the game's item
+            // first and the glass replay lands over it, so a replay that makes no pixels still leaves the item there
+            if (!queued || item) reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
             // (2026-11-18: replaying item draws right here froze the game at the main menu - the flush copies the colour
             //  target, not allowed mid render pass. Items replay with the rest, at the pass end.)
         } else {
