@@ -645,17 +645,30 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
 
 float lum3(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 float3 chroma(float3 c, float3 P, bool sky, float spareC) {
+    // (Fernando 2026-11-19: next to Purxiy it "pales". The colour now bleeds in like wet paint: a ragged, flowing edge
+    //  (no clean circles), a bright saturated rim where it is spreading, and fresh colour a little richer than life
+    //  before it settles; the waiting world is a cool, slightly deeper grey so the colour pops against it.)
     float k = max(1.0 - spareC, ch0.w);                            // living things keep their colour
+    float rim = 0.0;
     int n = min(int(ch1.w), 48);
-    float const R2 = (ch1.x + 2.5) * (ch1.x + 2.5);
+    float const R2 = (ch1.x + 3.0) * (ch1.x + 3.0);
+    float3 wq = P + c5.xyz;                                        // world position: the edge pattern stays put as you move
+    float  wob = 0.55 * sin(wq.x * 1.7 + sin(wq.z * 1.3) * 1.5) + 0.45 * sin(wq.z * 2.3 + sin(wq.x * 0.9 + wq.y) * 1.2);
     [loop] for (int i = 0; i < n && k < 0.999; ++i) {               // chP.w = the fade (CPU), 1 fresh .. 0 forgotten
         float3 d = P - chP[i].xyz;
         if (dot(d, d) > R2 || chP[i].w <= k) continue;               // too far, or cannot raise k
-        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0);
-        k = max(k, chP[i].w * smoothstep(ch1.x, ch1.x * 0.45, r));
+        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0) + wob * 0.45 * ch1.x * 0.3;
+        float  e = smoothstep(ch1.x, ch1.x * 0.45, r);
+        rim = max(rim, chP[i].w * exp(-pow((r - ch1.x * 0.78) / (0.16 * ch1.x + 0.15), 2.0)) * (1.0 - e * 0.6));
+        k = max(k, chP[i].w * e);
     }
-    float3 grey = lum3(c) * ch0.rgb / max(lum3(ch0.rgb), 0.05);
-    return lerp(grey, c, saturate(k));
+    float  lc   = lum3(c);
+    float3 grey = (lc * lc * 0.25 + lc * 0.75) * ch0.rgb / max(lum3(ch0.rgb), 0.05);   // a touch deeper than flat grey
+    float3 rich = lerp(lc.xxx, c, 1.25);                                               // fresh colour: a little richer
+    float3 col  = lerp(c, max(rich, 0.0), saturate(k) * 0.6);
+    float3 o    = lerp(grey, col, saturate(k));
+    float3 vivid = max(lerp(lc.xxx, c, 2.2), 0.0) * 1.15 + 0.02;                      // the spreading edge, saturated and lit
+    return lerp(o, vivid, saturate(rim) * 0.55);
 }
 float3 radiance(int2 p, float3 P, float zc) {
     // inside a player / mob / item box, where the depth behind jumps away: the silhouette
@@ -1084,39 +1097,39 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
     float soft = saturate(cu0.w);
     float lumC = dot(L, float3(0.2126, 0.7152, 0.0722));
     // pastel: colours lifted toward a milky pink-lilac, contrast eased
-    float3 pastel = lerp(L, lumC * float3(1.0, 0.86, 0.95) + 0.10, 0.35 * cu1.z) * (0.92 + 0.08 * soft);
+    float3 pastel = lerp(L, lumC * float3(1.0, 0.84, 0.95) + 0.12, 0.42 * cu1.z) * (0.94 + 0.08 * soft);
     pastel = lerp(pastel, sqrt(max(pastel, 0.0)) * 0.95, 0.25 * soft);
     float3 o = lerp(L, pastel, cu1.z > 0.0 ? 1.0 : 0.0);
     // hearts drifting up in the air around you (a few per cell of a 3-block grid, depth-tested)
     float3 hl = 0;
-    [unroll] for (int k = 1; k <= 3; ++k) {
-        float R = float(k) * 3.0;
+    [unroll] for (int k = 1; k <= 4; ++k) {   // (2026-11-19: bigger, glossier, more of them - they were specks)
+        float R = float(k) * 2.5;
         float tp = R;
         if (tp > dist) break;
         float3 q = rd * tp + c5.xyz;
         float3 cid = floor(q / 3.0);
         float h = cyHash(cid + float(k));
-        if (h > cu1.x * 0.6) continue;
+        if (h > cu1.x * 0.85) continue;
         float life = frac(t * 0.12 + h);                                  // 0..1 as it rises; it fades in and out (no pop at the top)
         float3 ctr = (cid + 0.5) * 3.0 + float3(0, life * 1.6 - 0.8, 0);   // drifts inside its own cell
         float3 d = rd * dot(ctr - c5.xyz, rd) - (ctr - c5.xyz);
         float dz = dot(ctr - c5.xyz, rd);
         if (dz < 0.3 || dz > dist) continue;
-        float2 pl2 = float2(dot(d, normalize(cross(rd, float3(0, 1, 0)))), d.y) / (0.12 + 0.05 * h);
+        float2 pl2 = float2(dot(d, normalize(cross(rd, float3(0, 1, 0)))), d.y) / (0.20 + 0.08 * h);
         pl2.y = pl2.y + 0.25;                                               // (was flipped: the hearts hung upside down)
         float hx = abs(pl2.x);
         float heart = pl2.y - sqrt(max(hx, 0.0)) * 0.55;                  // a classic heart curve
         float sd = length(float2(hx, heart)) - 0.75;
         float fill = 1.0 - smoothstep(-0.05, 0.08, sd);
-        float halo = exp(-max(sd, 0.0) * 5.0) * (1.0 - fill) * 0.45;      // a soft glow around it
+        float halo = exp(-max(sd, 0.0) * 3.5) * (1.0 - fill) * 0.7;       // a soft glow around it
         float2 hp = pl2 - float2(-0.32, 0.62);
-        float hi = exp(-dot(hp, hp) * 9.0) * fill;                          // a candy highlight, top-left lobe
+        float hi = exp(-dot(hp, hp) * 9.0) * fill + exp(-dot(hp - float2(0.12, -0.1), hp - float2(0.12, -0.1)) * 60.0) * fill * 1.5;   // candy gloss + a hard glint
         float edge = smoothstep(-0.32, 0.0, sd) * fill;                     // a deeper tone toward the outline
-        float3 hc = lerp(cu0.rgb * (1.0 - 0.35 * edge), float3(1.0, 0.96, 0.98), 0.45 * hi);
-        float win = smoothstep(0.6, 0.35, length(d));                      // the glow ends well inside the cell: no box
+        float3 hc = lerp(cu0.rgb * (1.15 - 0.4 * edge), float3(1.0, 0.97, 0.99), saturate(0.4 * hi));
+        float win = smoothstep(0.85, 0.55, length(d));                      // the glow ends well inside the cell: no box
         win *= smoothstep(0.0, 0.18, life) * smoothstep(1.0, 0.72, life);  // born and gone softly
         win *= smoothstep(1.35, 0.7, abs(dz - R));                         // as you move it fades instead of blinking out
-        hl += (hc * fill + cu0.rgb * halo) * win * (0.7 + 0.3 * sin(t * 2.0 + h * 20.0)) * 0.9;
+        hl += (hc * fill * 1.0 + cu0.rgb * halo * 0.8) * win * (0.8 + 0.2 * sin(t * 2.0 + h * 20.0));
     }
     // sparkles on the ground / scenery near you
     if (!sky && cu1.y > 0.0 && dist < 24.0) {
@@ -1125,7 +1138,7 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
         float hs = cyHash(ci);
         float tw = pow(saturate(sin(t * 3.0 + hs * 40.0)), 16.0);
         float3 fq = frac(wp) - 0.5;
-        o += float3(1.0, 0.95, 1.0) * step(0.985 - 0.02 * cu1.y, hs) * tw * exp(-dot(fq, fq) * 30.0) * 1.5 * (1.0 - dist / 24.0);
+        o += float3(1.0, 0.95, 1.0) * step(0.975 - 0.03 * cu1.y, hs) * tw * exp(-dot(fq, fq) * 22.0) * 2.2 * (1.0 - dist / 24.0);
     }
     return o + hl;
 }
