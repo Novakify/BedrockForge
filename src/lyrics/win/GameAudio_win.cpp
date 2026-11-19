@@ -26,6 +26,7 @@ using Microsoft::WRL::ComPtr;
 struct State {
     std::atomic<bool>  want{false}, running{false};
     std::atomic<float> level{0}, low{0}, boom{0};
+    std::atomic<float> peakLv{0}, peakLo{0};   // loudest raw block since the log last read them (for tuning)
     std::atomic<int>   booms{0};
     std::atomic<int>   status{0};   // 0 off, 1 listening, -1 not supported here
     std::thread        th;
@@ -68,7 +69,7 @@ void loop() {
     ComPtr<IAudioClient> client;
     ComPtr<IAudioCaptureClient> cap;
     auto teardown = [&] { if (client) client->Stop(); cap.Reset(); client.Reset(); };
-    float avg = 0, lowState = 0;   // slow loudness (the room tone) and a one-pole low pass (rumble)
+    float avg = 0, avgLo = 0, lowState = 0;   // slow loudness (the room tone) and a one-pole low pass (rumble)
     int   fails = 0;
     while (s.running.load()) {
         if (!s.want.load()) {
@@ -119,12 +120,20 @@ void loop() {
         float const lrms = cnt ? float(std::sqrt(lowSum / double(cnt))) : 0.0f;
         float const lv   = std::clamp(rms * 3.0f, 0.0f, 1.0f);
         float const lo   = std::clamp(lrms * 5.0f, 0.0f, 1.0f);
-        avg += (lv - avg) * 0.01f;                                       // ~1 s room tone
+        if (!cnt) continue;                                               // no new audio this 10 ms: keep the state as is
+        avg   += (lv - avg) * 0.01f;                                      // ~1 s room tone
+        avgLo += (lo - avgLo) * 0.01f;                                    // ...and its rumble
         s.level = s.level.load() + (lv - s.level.load()) * 0.25f;
         s.low   = s.low.load() + (lo - s.low.load()) * 0.3f;
-        // a boom: a loud low hit well above the room tone (TNT, a creeper, thunder, an end crystal) - not footsteps
+        if (lv > s.peakLv.load()) s.peakLv = lv;
+        if (lo > s.peakLo.load()) s.peakLo = lo;
+        // a boom: a sudden low hit well above the room tone (TNT, a creeper, thunder, an end crystal) - not footsteps.
+        // Relative to the room tone (game volume and distance change how loud a boom is in the capture), with a small floor.
         float b = s.boom.load() * 0.94f;
-        if (lo > 0.35f && lv > avg * 2.5f + 0.12f && b < 0.3f) { b = std::min(1.0f, lo * 1.3f); ++s.booms; }
+        if (lo > 0.06f && lo > avgLo * 4.0f + 0.03f && lv > avg * 2.0f + 0.03f && b < 0.3f) {
+            b = std::clamp(lo * 3.0f, 0.3f, 1.0f);
+            ++s.booms;
+        }
         s.boom = b;
     }
     teardown();
@@ -144,6 +153,10 @@ void gameAudioWant(bool on) {
 GameAudio gameAudio() {
     auto& s = S();
     return {s.level.load(), s.low.load(), s.boom.load(), s.booms.load(), s.status.load()};
+}
+void gameAudioPeaks(float& lv, float& lo) {   // loudest raw block since the last call (the Director log's tuning line)
+    auto& s = S();
+    lv = s.peakLv.exchange(0), lo = s.peakLo.exchange(0);
 }
 } // namespace bf::lyrics
 #endif
