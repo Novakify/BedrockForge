@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+struct IUnknown;
 struct ID3D12PipelineState;
 struct ID3D12Resource;
 struct ID3D12GraphicsCommandList;
