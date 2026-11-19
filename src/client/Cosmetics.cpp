@@ -136,14 +136,16 @@ struct State {
     float   lastX = 0, lastZ = 0, lastYaw = 0;
 } gS;
 
-std::atomic<int64_t> gHitMs{0};     // your confirmed hits (GameMode::attack hook in Modules.cpp)
+std::atomic<int64_t> gHitMs{0};
+std::atomic<bool>    gHitCrit{false};   // the last confirmed hit was a critical one
 std::atomic<int>     gHitCount{0};
 std::atomic<int>     gTestSwing{0};
 
 } // namespace
 
 void testSwing() { ++gTestSwing; }
-void noteLocalHit(bool /*crit*/) {
+void noteLocalHit(bool crit) {
+    gHitCrit = crit;
     gHitMs = nowMs();
     ++gHitCount;
 }
@@ -166,7 +168,10 @@ void registerModules(Registry& r) {
         .choice("finish", "Finish", {"Random", "Factory", "Blackout", "Gold", "Fade"}, 0)
         .choice("fx_color", "Effect colour", {"Random", "Steel", "Violet", "Ember", "Gold", "Crimson"}, 0)
         .choice("slash", "Slash style", {"Matched to the knife", "Trail", "Crescent", "Thrust streak"}, 0)
-        .slider("size", "Size (first person)", 1.f, 0.7f, 1.3f, 0.05f)
+        .slider("size", "Size (all knives)", 1.f, 0.5f, 1.8f, 0.05f)
+        .slider("size_k1", "Karambit size (remembered for this knife)", 1.f, 0.5f, 1.8f, 0.05f)
+        .slider("size_k2", "Balisong size (remembered for this knife)", 1.f, 0.5f, 1.8f, 0.05f)
+        .slider("size_k3", "Dagger size (remembered for this knife)", 1.f, 0.5f, 1.8f, 0.05f)
         .slider("pos_x", "Left / right (first person)", 0.f, -3.f, 3.f, 0.25f)
         .slider("pos_y", "Up / down (first person)", 0.f, -3.f, 3.f, 0.25f)
         .toggleSetting("third_person", "Knife in third person too", true)
@@ -208,7 +213,9 @@ void frame(LocalPlayer* lp) {
             fin = float(fset == 0 ? gS.finish : fset - 1);
             int const sset = int(m->num("slash", 0));
             slash = float(sset == 0 ? (design > 0 ? kMatchedSlash[int(design) - 1] : 0) : sset - 1);
-            scl = m->num("size", 1.f);
+            scl = m->num("size", 1.f);   // x the held knife's own size (each knife keeps its own)
+            if (design >= 1 && design <= 3) scl *= m->num(design == 1 ? "size_k1" : design == 2 ? "size_k2" : "size_k3", 1.f);
+            scl = std::clamp(scl, 0.4f, 2.0f);
             ox = m->num("pos_x", 0.f);
             oy = m->num("pos_y", 0.f);
             bool const input = w32::gameFocused() && !menu::isOpen() && w32::cursorHidden();
@@ -241,7 +248,7 @@ void frame(LocalPlayer* lp) {
             if (int const n = gHitCount.load(); n != gS.hitN) { gS.hitN = n; gS.hitAt = gHitMs.load(); }
             hit = secs(gS.hitAt);
             opt = float((m->flag("slash_arcs", true) ? 1 : 0) | (m->flag("hit_effects", true) ? 2 : 0) | (m->flag("sounds", true) ? 4 : 0)
-                        | (m->flag("quiet", false) ? 8 : 0) | (m->flag("glint", true) ? 0 : 16) | (m->flag("third_person", true) ? 0 : 32));
+                        | (m->flag("quiet", false) ? 8 : 0) | (m->flag("glint", true) ? 0 : 16) | (m->flag("third_person", true) ? 0 : 32) | (gHitCrit.load() ? 64 : 0));
         }
         // always written (rest values while off): the pack reads them every frame, and a variable that was never set
         // made the sword vanish in game. Unchanged values are skipped (setCached).
