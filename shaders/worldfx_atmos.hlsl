@@ -192,13 +192,34 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
                 float  coc  = amb3.y > 0.5 ? max(0.0, 2.2 - tp) * 0.03 : 0.0;   // near ones: a soft round bokeh
                 float  r    = size + coc;
                 float  core = exp(-dd * dd / (r * r));
-                float  halo = amb2.x * exp(-dd / (r * 4.0)) * 0.22;
+                float  halo = amb2.x * exp(-dd / (r * 4.0)) * 0.22 * smoothstep(0.8, 3.5, tp);   // close ones: no big fog ball
                 float  tw   = 1.0 - amb2.z * (0.5 + 0.5 * sin(t * (2.0 + 3.0 * h.y) + ph * 3.0));   // twinkle / breathe
                 float  fade = smoothstep(tMax, tMax * 0.65, tp) * (r > size ? size * size / (r * r) * 1.6 + 0.12 : 1.0);
                 float3 cc   = lerp(amb0.rgb, amb1.rgb, h.z);
                 if (style == 3) cc = lerp(float3(0.85, 0.90, 1.0), cc, 0.25);   // snow stays white
                 float  win  = smoothstep(margin, margin * 0.45, dd);          // zero at the cell wall: no box
-                acc += cc * (core * 2.2 + halo * 1.6) * tw * fade * win * lerp(0.75, 1.0, night);
+                win *= smoothstep(0.3, 1.3, tp);                              // one brushing the lens fades instead of filling the view
+                // (2026-11-19, "the particles aren't as shiny"): a white-hot heart in every light, and each style its own
+                // shape - stardust flashes four-point stars, petals are turning ovals with a lit edge, snow catches glints
+                float3 v   = rel - rd * tp;
+                float3 ax  = normalize(cross(rd, float3(0, 1, 0)) + float3(1e-4, 0, 0)), ay = cross(ax, rd);
+                float  x   = dot(v, ax) / r, y = dot(v, ay) / r;
+                float  hotC = exp(-dd * dd / (r * r * 0.16));
+                float  shape = core;
+                if (style == 1) {                                             // stardust: star spikes, flashing in turn
+                    float fl = pow(saturate(sin(t * (1.3 + h.y) + ph * 5.0)), 5.0);
+                    shape += (exp(-abs(x) * 0.5 - y * y * 9.0) + exp(-abs(y) * 0.5 - x * x * 9.0)) * (0.25 + 1.2 * fl);
+                } else if (style == 2) {                                      // petals: a turning oval, lit along one side
+                    float  ang = t * (0.8 + h.x) * sp + ph;
+                    float2 q   = float2(cos(ang) * x + sin(ang) * y, -sin(ang) * x + cos(ang) * y) * float2(0.75, 1.5 + 0.8 * abs(sin(ang * 0.7)));
+                    float  e   = dot(q, q);
+                    shape = smoothstep(1.3, 0.7, e) * (0.75 + 0.5 * saturate(q.x)) + exp(-e * 0.8) * 0.2;
+                    hotC *= 0.4;
+                } else if (style == 3) {                                      // snow: a soft flake that catches glints
+                    float g = pow(saturate(sin(t * 4.0 + ph * 7.0)), 12.0);
+                    shape += g * (exp(-abs(x) * 0.8 - y * y * 12.0) + exp(-abs(y) * 0.8 - x * x * 12.0)) * 0.8;
+                }
+                acc += (cc * (shape * 2.2 + halo * 1.6) + float3(1.0, 0.98, 0.95) * hotC * 1.6) * tw * fade * win * lerp(0.75, 1.0, night);
             }
         }
         // the next cell along the ray
