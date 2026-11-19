@@ -1381,7 +1381,6 @@ void registerBuiltins() {
         .slider("scale", "FOV scale", 1.15f, 0.5f, 1.8f, 0.05f);
     r.add("sensitivity", "Sensitivity Multiplier", Category::Camera, "Multiply mouse sensitivity")
         .slider("multiplier", "Multiplier", 1.0f, 0.1f, 4.0f, 0.05f);
-    r.plan("freelook", "Freelook", Category::Camera, "Look around without turning (Lamium has this today)");
     r.plan("snap_look", "Snap Look", Category::Camera, "Hold a key for third-person front view");
     r.add("view_bobbing", "No View Bobbing", Category::Camera, "Turn off the walking camera bob");
     {   // [Purxiy "hand_movement"] where your held item sits and how big it is
