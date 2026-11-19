@@ -338,14 +338,48 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                 }
             }
         } else if (kind == 4 && fx5.z > 0.0) {                    // landing: a wave runs out through the ground
-            float u = age / 0.9;
-            if (u < 1.0 && abs(dv.y) < 0.8) {
-                float s = saturate(evK[i].y / 1.2);
-                float r = length(dv.xz);
-                float R1 = fx5.z * (1.8 + 2.5 * s) * (1.0 - pow(1.0 - u, 2.2)), R2 = R1 * 0.62;
-                float k = exp(-pow((r - R1) / 0.14, 2.0)) + 0.55 * exp(-pow((r - R2) / 0.10, 2.0));
-                k += fx5.w * 0.3 * exp(-abs(r - R1) / 0.5);
-                L += fx6.rgb * k * pow(1.0 - u, 1.6) * (0.6 + 0.8 * s) * smoothstep(0.8, 0.3, abs(dv.y));
+            // (Purxiy reference, videos 0 / 5: the wave follows the VOXEL GRID - the top face of each ground block the front
+            //  passes gets a faint fill and its four edges light up as glowing outlines, a jagged ring of lit blocks
+            //  racing out at ~12 blocks/s and fading behind, ~0.55 s.)
+            float u = age / 0.6;
+            if (u < 1.0 && abs(dv.y) < 0.8 && upN > 0.6) {
+                float s  = saturate(evK[i].y / 1.2);
+                float3 wp = c5.xyz + P;
+                float2 f  = frac(wp.xz);
+                float2 bc = floor(wp.xz) + 0.5 - (c5.xz + c.xz);       // this block's centre, from the landing
+                float  rb = length(bc);
+                float  Rmax = fx5.z * (4.0 + 4.0 * s);
+                float  R1 = Rmax * (1.0 - pow(1.0 - u, 1.6));
+                float  lit  = exp(-pow((rb - R1) / 0.65, 2.0)) + 0.35 * exp(-pow((rb - R1 * 0.55) / 0.7, 2.0));   // the front + an echo
+                lit *= step(rb, Rmax + 0.5);
+                float  e  = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+                float  aa = 0.006 * length(P) + 0.004;
+                float  core = 1.0 - smoothstep(0.012, 0.012 + aa, e);
+                float  glow = exp(-e / 0.06);
+                float3 cW = lerp(fx6.rgb, float3(1.0, 0.97, 0.94), 0.65);
+                float  fade = pow(1.0 - u, 1.3) * (0.6 + 0.8 * s) * smoothstep(0.8, 0.3, abs(dv.y));
+                L += (fx6.rgb * (0.22 + glow * (0.9 + fx5.w * 0.8)) + cW * core * 1.8) * lit * fade;
+            }
+        }
+        // critical hits: 4-point stars burst out from the blow and twinkle away (Purxiy crit stars), drawn in the air
+        // along your view ray, hidden behind what is nearer
+        if (kind == 3 && fx5.y > 0.5 && age < 0.55) {
+            float  dist = length(P);
+            float3 rgt = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), upv = cross(rgt, rd);
+            float  u = age / 0.55;
+            [unroll] for (int k = 0; k < 6; ++k) {
+                float  a  = seed * 37.0 + float(k) * 1.047 + 0.4 * sin(seed * 9.0 + float(k) * 3.0);
+                float  rr = (0.35 + 0.25 * frac(seed * 13.0 + float(k) * 0.71)) * (1.0 - pow(1.0 - u, 2.5)) * 1.4;
+                float3 sp = c + float3(0, 0.15, 0) + (rgt * cos(a) + upv * sin(a)) * rr;
+                float  tz = dot(sp, rd);
+                if (tz < 0.2 || tz > dist + 0.05) continue;
+                float3 off = rd * tz - sp;
+                float  sx = dot(off, rgt), sy = dot(off, upv);
+                float  sz = (0.20 + 0.10 * frac(seed * 5.0 + float(k))) * (1.0 - u * 0.5);
+                float  st = exp(-abs(sx) / (sz * 0.08)) * exp(-abs(sy) / sz) + exp(-abs(sy) / (sz * 0.08)) * exp(-abs(sx) / sz);
+                st += exp(-(sx * sx + sy * sy) / (sz * sz * 0.03)) * 1.5 + exp(-(sx * sx + sy * sy) / (sz * sz * 0.5)) * 0.35;
+                float  tw = 0.6 + 0.4 * sin(age * 40.0 + float(k) * 2.0);
+                L += lerp(fx2.rgb, float3(1.0, 0.98, 0.9), 0.55) * st * tw * pow(1.0 - u, 1.2) * 2.2;
             }
         }
     }
