@@ -614,76 +614,108 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
         }
     }
     [branch] if (ha0.w > 0.0 && (!fp || ha1.w > 0.5)) {
-        float3 hc = pl.xyz + float3(0, 1.95 + 0.15 * ha1.y + 0.03 * sin(t * 1.6), 0);   // audit: hugs the head (was 0.4 above it)
-        bool const crown = int(ha1.z + 0.5) == 2;
-        // a crown is WORN (in game 2026-11-19 it floated over the head like a halo): its rim sits on the head, just under
-        // the top, no bob; the Height slider only nudges it
-        if (crown) hc = pl.xyz + float3(0, 1.80 + 0.06 * (ha1.y - 1.0), 0);
-        // the halo's plane (horizontal, a slight tilt); the ray meets it at one point: distance to the ring there
+        // (2026-11-19, against the Purxiy videos: their halos are real glowing TUBES - a white-hot core, the colour round
+        //  it and a wide bloom - not a flat line; Seraph has plasma tendrils crawling inside and round it; the Crown halo
+        //  floats over the head: a cream ring with eight thin spikes standing up, pearl beads on the tips that flash
+        //  star glints, a warm bloom, a slow spin and a gentle bob.) Ray-marched (a torus + spikes), only for the pixels
+        //  whose view ray passes near it.
         int   dz   = int(ha1.z + 0.5);
-        float tilt = dz == 5 ? 0.38 : dz == 2 ? 0.0 : 0.08;            // fallen: knocked askew; a crown sits level
-        float3 nrm = normalize(float3(tilt * sin(pl.w), 1, tilt * cos(pl.w)));
-        float den = dot(rd, nrm);
-        if (abs(den) > 1e-3) {
-            float tp = dot(hc, nrm) / den;
-            if (tp > 0.2 && tp < dist + 0.3) {
-                float3 hp = rd * tp - hc;
-                float R = (crown ? 0.31 : 0.28) * ha0.w, rr = length(hp - nrm * dot(hp, nrm));
-                float wdt = 0.032 * ha0.w;   // (2026-11-19: thicker - they read as a thread next to Purxiy)
-                float k = exp(-pow((rr - R) / wdt, 2.0));
-                float an = atan2(hp.z, hp.x);
-                // (in game 2026-11-19: only Seraph read as a design - the others were the same thin ring a touch dimmer.
-                //  Each is its own shape now; Crown also gets a real band of points, below.)
-                if (dz == 1) {                                             // sigil: three rings, the inner and outer broken and turning against each other
-                    k += 0.9 * exp(-pow((rr - R * 0.68) / (wdt * 0.8), 2.0)) * step(0.5, frac((an + t * 0.5) * 1.9099));
-                    k += 0.7 * exp(-pow((rr - R * 1.24) / (wdt * 0.7), 2.0)) * step(0.7, frac((an - t * 0.35) * 3.8197));
-                } else if (dz == 2) k *= 0.9;                              // crown: the ring is its base
-                else if (dz == 3) {                                        // stardust: ten beads of light running round, no ring
-                    float bead = pow(0.5 + 0.5 * cos((an + t * 0.4) * 10.0), 26.0);
-                    k = exp(-pow((rr - R) / (wdt * 1.7), 2.0)) * bead * 2.2 + 0.10 * k;
-                } else if (dz == 4) k = exp(-pow((rr - R) / (wdt * 2.2), 2.0)) * (0.30 + 0.70 * smoothstep(-1.0, 1.0, sin(an - t)));   // eclipse: a wide ring, light sweeping round it
-                else if (dz == 5) k *= step(0.24, frac(an * 0.15915 + 0.1)) * (0.75 + 0.25 * sin(t * 9.0 + an * 3.0));       // fallen: askew, a piece missing, guttering
-                // the soft glow dies out within a hand's width of the ring (it used to reach a block out across the
-                // halo's plane at full Glow: a faint see-through sheet over your head in third person)
-                float gl = (rr - R) / (wdt * 6.0);
-                // shine: a white-hot line along the ring's middle and a glint of light running round it
-                float coreL = exp(-pow((rr - R) / (wdt * 0.32), 2.0)) * saturate(k * 1.5);
-                float glint = pow(0.5 + 0.5 * cos(an - t * 1.4), 48.0) * saturate(k * 2.0) + pow(0.5 + 0.5 * cos(an + 2.6 - t * 0.9), 64.0) * saturate(k * 2.0) * 0.6;
-                float3 hot = float3(1.0, 0.98, 0.94);
-                L += crown ? ha0.rgb * (k * 0.55 + ha1.x * 0.08 * exp(-gl * gl))     // a crown's base is its rim, not a glowing ring
-                           : ha0.rgb * (k * 2.0 + ha1.x * 0.45 * exp(-gl * gl)) + hot * (coreL * 1.4 + glint * 2.4);
+        bool  crown = dz == 2;
+        float S    = ha0.w;
+        float bob  = 0.025 * sin(t * 1.6) * S;
+        float3 hc  = pl.xyz + float3(0, (crown ? 2.18 : 2.02) + 0.15 * (ha1.y - 1.0) + bob, 0);
+        float R    = (crown ? 0.40 : 0.33) * S;                         // ring radius
+        float rt   = (crown ? 0.042 : dz == 0 ? 0.034 : 0.024) * S;     // tube radius
+        float tilt = dz == 5 ? 0.38 : dz == 2 ? 0.04 : 0.10;
+        float3 nrm = normalize(float3(tilt * sin(pl.w + 0.4 * sin(t * 0.7)), 1, tilt * cos(pl.w + 0.4 * sin(t * 0.7))));
+        float3 ax  = normalize(cross(nrm, float3(0, 0, 1)) + float3(1e-4, 0, 0)), az = cross(ax, nrm);
+        float spin = t * (crown ? 0.17 : 0.35) + pl.w;                 // ~10 deg/s for the crown
+        float tc   = dot(hc, rd);
+        float3 cp  = hc - rd * tc;
+        float  reach = R + 0.32 * S;
+        [branch] if (dot(cp, cp) < reach * reach && tc > 0.2) {
+            float t0 = max(tc - reach, 0.2), t1 = min(tc + reach, dist + 0.3);
+            float tt = t0, dmin = 1e9, hit = -1.0, tipG = 0.0;
+            float3 hp = 0;
+            [loop] for (int k = 0; k < 40 && tt < t1; ++k) {
+                float3 q  = rd * tt - hc;
+                float3 lq = float3(dot(q, ax), dot(q, nrm), dot(q, az));     // halo space: y up the ring's axis
+                float  rr = length(lq.xz);
+                float  d  = length(float2(rr - R, lq.y)) - rt;              // the torus
+                if (crown) {                                                // eight spikes standing on the ring
+                    float an = atan2(lq.z, lq.x) - spin;
+                    float sec = 6.2831853 / 8.0;
+                    float am = (frac(an / sec + 0.5) - 0.5) * sec;
+                    float2 cpos = float2(cos(an - am + spin), sin(an - am + spin)) * R;   // nearest spike's foot (back in the ring's frame)
+                    float  H = (0.20 + 0.06 * step(0.5, frac((an - am) / sec * 0.5 + 0.25))) * S;   // alternating heights
+                    float  yy = lq.y - rt * 0.4;
+                    float  u = saturate(yy / H);
+                    float  ds = length(lq.xz - cpos) - rt * 0.85 * (1.0 - u);
+                    ds = max(ds, max(-yy, yy - H));
+                    d = min(d, ds * 0.8);
+                    float3 tip = float3(cpos.x, rt * 0.4 + H, cpos.y);
+                    tipG = max(tipG, exp(-dot(lq - tip, lq - tip) / (0.00035 * S * S)));
+                }
+                dmin = min(dmin, d);
+                if (d < 0.0015 * S) { hit = tt; hp = lq; break; }
+                tt += max(d * 0.9, 0.004 * S);
             }
-        }
-        [branch] if (dz == 2) {   // crown: an upright band on the ring, rising to five points (the ray against its cylinder, near and far wall)
-            float  R = 0.31 * ha0.w;
-            float2 o = -hc.xz, dv2 = rd.xz;
-            float  qa = dot(dv2, dv2), qb = dot(o, dv2), qc = dot(o, o) - R * R;
-            float  disc = qb * qb - qa * qc;
-            if (qa > 1e-6 && disc > 0.0) {
-                float sq = sqrt(disc);
-                [unroll] for (int w = 0; w < 2; ++w) {
-                    float s = (-qb + (w == 0 ? -sq : sq)) / qa;
-                    if (s < 0.2 || s > dist + 0.3) continue;
-                    float3 h3 = rd * s - hc;
-                    float  a5 = atan2(h3.z, h3.x) + pl.w;                 // turns with you
-                    // five crisp points (a triangle wave, not a soft swell - in the lab the sine read as jelly), each rising
-                    // from a low band; a jewel of light on every tip
-                    float  ph  = frac(a5 * 1.273240) * 2.0 - 1.0;          // -1..1 across one of the eight (Purxiy ref: 6-8 spikes)
-                    float  tri = saturate(1.0 - abs(ph) * 1.15);
-                    float  pk  = tri * tri * (3.0 - 2.0 * tri);
-                    float  H  = ha0.w * (0.060 + 0.150 * pk);             // the band's height here (taller: it read as a ribbon)
-                    if (h3.y < -0.004 || h3.y > H + 0.02 * ha0.w) continue;
-                    float  inB  = step(h3.y, H);
-                    float  edge = exp(-pow((H - h3.y) / (0.008 * ha0.w), 2.0));          // the lit cut edge along the top
-                    float  rimB = exp(-pow((h3.y - 0.006 * ha0.w) / (0.010 * ha0.w), 2.0)); // the rim along the bottom
-                    float  body = (0.75 + 0.25 * ha1.x) * lerp(1.0, 0.65, h3.y / max(H, 1e-3));    // metal: brighter at the base
-                    float  sweep = pow(saturate(1.0 - abs(frac(a5 * 0.159 - t * 0.12) - 0.5) * 8.0), 2.0);   // a shine travelling round the band
-                    float2 tipP = float2(ph * 0.075 * ha0.w, h3.y - ha0.w * 0.212);
-                    float  gem  = exp(-dot(tipP, tipP) / (0.00030 * ha0.w * ha0.w)) * step(abs(ph), 0.35);
-                    L += (ha0.rgb * (inB * body + 1.6 * edge * inB + 1.2 * rimB) + float3(1.0, 0.96, 0.88) * inB * sweep * 0.9) * (w == 0 ? 1.0 : 0.45)
-                       + float3(1.0, 0.99, 0.95) * gem * 3.4;   // pearl tips
+            float3 hot = float3(1.0, 0.98, 0.95);
+            float3 col = ha0.rgb;
+            float  glowW = (crown ? 0.055 : 0.06) * S * (0.6 + 0.6 * ha1.x);
+            float  bloom = exp(-max(dmin, 0.0) / glowW) * smoothstep(reach, reach * 0.75, length(cp));   // fades out well inside the march window: no disc edge
+            float3 Lh = 0;
+            if (hit > 0.0) {
+                float rr  = length(hp.xz);
+                float2 tq = float2(rr - R, hp.y);                           // across the tube
+                float  ct = 1.0 - saturate(length(tq) / max(rt, 1e-4));      // 1 at the tube's middle line
+                if (crown) {
+                    float3 cream = float3(1.0, 0.95, 0.80);
+                    float  shade = 0.75 + 0.25 * saturate(hp.y / max(rt, 1e-4) + 0.5);
+                    Lh = cream * (0.9 + 0.5 * ct) * shade + col * 0.25;
+                } else {
+                    // white core, the colour on the inner side, a cooler fringe outside (Seraph: pink in, lavender out)
+                    float inner = saturate(-tq.x / max(rt, 1e-4)), outer = saturate(tq.x / max(rt, 1e-4));
+                    float3 inC = lerp(col, float3(1.0, 0.78, 0.98), 0.45), outC = lerp(col, float3(0.72, 0.62, 1.0), 0.35);
+                    Lh = hot * (1.2 + 0.8 * ct) + inC * inner * 0.8 + outC * outer * 0.6;
+                    if (dz == 1) Lh *= 0.35 + 0.65 * step(0.45, frac((atan2(hp.z, hp.x) + t * 0.5) * 1.9099));   // sigil: broken
+                    if (dz == 5) Lh *= step(0.24, frac(atan2(hp.z, hp.x) * 0.15915 + 0.1)) * (0.75 + 0.25 * sin(t * 9.0 + atan2(hp.z, hp.x) * 3.0));   // fallen
+                    if (dz == 3) Lh *= 0.25 + 1.5 * pow(0.5 + 0.5 * cos((atan2(hp.z, hp.x) + t * 0.4) * 10.0), 18.0);   // stardust: beads of light
+                    if (dz == 4) Lh *= 0.35 + 0.75 * smoothstep(-1.0, 1.0, sin(atan2(hp.z, hp.x) - t));            // eclipse: light sweeping round
                 }
             }
+            float3 glowC = crown ? lerp(float3(1.0, 0.85, 0.40), col, 0.3) : col;
+            Lh += glowC * bloom * (crown ? 0.9 : 0.75) * (0.5 + 0.7 * ha1.x) * (hit > 0.0 ? 0.35 : 1.0);
+            if (crown) {   // pearl beads on the tips, flashing four-point glints in turn
+                Lh += hot * tipG * 2.0;
+                float3 q0 = rd * tc - hc;
+                float  an0 = atan2(dot(q0, az), dot(q0, ax)) - spin;
+                float  flash = pow(saturate(sin(t * 2.3 + floor(an0 / 0.785398) * 1.7)), 12.0);
+                float2 sp = float2(dot(cp, ax), dot(cp, nrm));
+                Lh += hot * tipG * flash * 3.0;
+            }
+            [branch] if (dz == 0) {   // Seraph: plasma tendrils crawling in the ring's plane and out past it
+                float den = dot(rd, nrm);
+                if (abs(den) > 1e-3) {
+                    float tp = dot(hc, nrm) / den;
+                    if (tp > 0.2 && tp < dist + 0.3) {
+                        float3 pq = rd * tp - hc;
+                        float  rho = length(pq - nrm * dot(pq, nrm)) / R, th = atan2(dot(pq, az), dot(pq, ax));
+                        float  tend = 0.0;
+                        [unroll] for (int j = 0; j < 4; ++j) {
+                            float fj = float(j);
+                            float rj = 0.55 + 0.28 * sin(3.0 * th + t * (1.3 + 0.3 * fj) + fj * 1.7) + 0.12 * sin(5.0 * th - t * 2.1 + fj * 2.3)
+                                     + 0.04 * sin(17.0 * th + t * 9.0 + fj);   // crawling, with a fine flicker
+                            float arc = smoothstep(0.2, 0.6, sin(th * (1.0 + fj * 0.5) + t * 0.8 + fj * 2.0));   // pieces, not whole loops
+                            tend += (exp(-pow((rho - rj) / 0.012, 2.0)) * 0.9 + exp(-pow((rho - rj) / 0.06, 2.0)) * 0.45) * arc;   // a bright thread in a soft wisp
+                        }
+                        float outA = exp(-pow((rho - 1.0 - 0.35 * (0.5 + 0.5 * sin(th * 2.0 + t * 1.7))) / 0.02, 2.0))
+                                   * smoothstep(0.75, 1.0, sin(th * 3.0 - t * 1.1)) * step(1.0, rho);   // arcs leaving the ring
+                        Lh += (hot * 0.45 + col * 1.2) * saturate(tend + outA) * smoothstep(1.6, 1.2, rho) + col * 0.18 * smoothstep(1.0, 0.2, rho);   // + the violet haze filling the ring
+                    }
+                }
+            }
+            L += Lh;
         }
     }
     return L;
