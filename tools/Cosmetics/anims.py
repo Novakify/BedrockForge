@@ -251,7 +251,7 @@ GLINT_AT = {"draw": 0.8, "insp1": 0.6, "insp2": 0.6, "insp3": 0.66, "insp4": 0.5
 
 
 GHOSTS = 8            # afterimage copies per knife
-GHOST_DT = 0.02       # seconds between copies (8 x 20 ms: the trail covers the last 160 ms of motion)
+GHOST_DT = 0.035      # seconds between copies (8 x 35 ms: the trail covers the last 280 ms of motion - Fernando: "a lot more noticeable")
 
 
 def ghost_bone(bone, g):

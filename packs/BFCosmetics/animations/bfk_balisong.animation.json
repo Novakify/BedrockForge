@@ -2047,7 +2047,7 @@
   },
   "animation.bfk.balisong.draw.g1": {
    "animation_length": 0.95,
-   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_safe": {
      "rotation": {
@@ -2214,19 +2214,7 @@
       "0.000": {
        "pre": [
         0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "0.067": {
-       "pre": [
-        0,
-        0,
+        1000,
         0
        ],
        "post": [
@@ -2235,7 +2223,7 @@
         0
        ]
       },
-      "0.767": {
+      "0.850": {
        "pre": [
         0,
         1000,
@@ -2253,7 +2241,7 @@
   },
   "animation.bfk.balisong.draw.g2": {
    "animation_length": 0.95,
-   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_safe": {
      "rotation": {
@@ -2429,7 +2417,7 @@
         0
        ]
       },
-      "0.867": {
+      "0.883": {
        "pre": [
         0,
         1000,
@@ -2447,7 +2435,7 @@
   },
   "animation.bfk.balisong.draw.g3": {
    "animation_length": 0.95,
-   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_safe": {
      "rotation": {
@@ -2641,7 +2629,7 @@
   },
   "animation.bfk.balisong.draw.g4": {
    "animation_length": 0.95,
-   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_safe": {
      "rotation": {
@@ -2835,7 +2823,7 @@
   },
   "animation.bfk.balisong.draw.g5": {
    "animation_length": 0.95,
-   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_safe": {
      "rotation": {
@@ -3029,7 +3017,7 @@
   },
   "animation.bfk.balisong.draw.g6": {
    "animation_length": 0.95,
-   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_safe": {
      "rotation": {
@@ -3223,7 +3211,7 @@
   },
   "animation.bfk.balisong.draw.g7": {
    "animation_length": 0.95,
-   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_safe": {
      "rotation": {
@@ -3417,7 +3405,7 @@
   },
   "animation.bfk.balisong.draw.g8": {
    "animation_length": 0.95,
-   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_d * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_safe": {
      "rotation": {
@@ -3611,7 +3599,7 @@
   },
   "animation.bfk.balisong.insp1.g1": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_safe": {
      "rotation": {
@@ -3793,30 +3781,6 @@
         0
        ]
       },
-      "1.050": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "1.133": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
       "1.400": {
        "pre": [
         0,
@@ -3835,7 +3799,7 @@
   },
   "animation.bfk.balisong.insp1.g2": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_safe": {
      "rotation": {
@@ -4017,7 +3981,7 @@
         0
        ]
       },
-      "1.400": {
+      "1.417": {
        "pre": [
         0,
         1000,
@@ -4035,7 +3999,7 @@
   },
   "animation.bfk.balisong.insp1.g3": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_safe": {
      "rotation": {
@@ -4217,7 +4181,7 @@
         0
        ]
       },
-      "1.400": {
+      "1.467": {
        "pre": [
         0,
         1000,
@@ -4235,7 +4199,7 @@
   },
   "animation.bfk.balisong.insp1.g4": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_safe": {
      "rotation": {
@@ -4417,7 +4381,31 @@
         0
        ]
       },
-      "1.433": {
+      "1.483": {
+       "pre": [
+        0,
+        1000,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "1.683": {
+       "pre": [
+        0,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        1000,
+        0
+       ]
+      },
+      "2.000": {
        "pre": [
         0,
         1000,
@@ -4435,7 +4423,7 @@
   },
   "animation.bfk.balisong.insp1.g5": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_safe": {
      "rotation": {
@@ -4617,7 +4605,31 @@
         0
        ]
       },
-      "1.467": {
+      "1.483": {
+       "pre": [
+        0,
+        1000,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "1.600": {
+       "pre": [
+        0,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        1000,
+        0
+       ]
+      },
+      "2.033": {
        "pre": [
         0,
         1000,
@@ -4635,7 +4647,7 @@
   },
   "animation.bfk.balisong.insp1.g6": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_safe": {
      "rotation": {
@@ -4829,7 +4841,7 @@
         0
        ]
       },
-      "1.783": {
+      "1.567": {
        "pre": [
         0,
         0,
@@ -4841,7 +4853,7 @@
         0
        ]
       },
-      "1.917": {
+      "2.033": {
        "pre": [
         0,
         1000,
@@ -4859,7 +4871,7 @@
   },
   "animation.bfk.balisong.insp1.g7": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_safe": {
      "rotation": {
@@ -5041,31 +5053,7 @@
         0
        ]
       },
-      "1.483": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "1.683": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
-      "2.000": {
+      "2.033": {
        "pre": [
         0,
         1000,
@@ -5083,7 +5071,7 @@
   },
   "animation.bfk.balisong.insp1.g8": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_safe": {
      "rotation": {
@@ -5265,30 +5253,6 @@
         0
        ]
       },
-      "1.483": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "1.633": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
       "2.033": {
        "pre": [
         0,
@@ -5307,7 +5271,7 @@
   },
   "animation.bfk.balisong.insp2.g1": {
    "animation_length": 2.0,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_pose": {
      "position": {
@@ -5446,19 +5410,7 @@
       "0.000": {
        "pre": [
         0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "0.033": {
-       "pre": [
-        0,
-        0,
+        1000,
         0
        ],
        "post": [
@@ -5467,7 +5419,7 @@
         0
        ]
       },
-      "0.733": {
+      "0.783": {
        "pre": [
         0,
         1000,
@@ -5479,7 +5431,7 @@
         0
        ]
       },
-      "1.100": {
+      "1.083": {
        "pre": [
         0,
         0,
@@ -5491,7 +5443,7 @@
         0
        ]
       },
-      "1.600": {
+      "1.617": {
        "pre": [
         0,
         1000,
@@ -5509,7 +5461,7 @@
   },
   "animation.bfk.balisong.insp2.g2": {
    "animation_length": 2.0,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_pose": {
      "position": {
@@ -5657,7 +5609,7 @@
         0
        ]
       },
-      "0.783": {
+      "0.900": {
        "pre": [
         0,
         1000,
@@ -5669,7 +5621,7 @@
         0
        ]
       },
-      "1.083": {
+      "1.033": {
        "pre": [
         0,
         0,
@@ -5681,7 +5633,7 @@
         0
        ]
       },
-      "1.617": {
+      "1.650": {
        "pre": [
         0,
         1000,
@@ -5699,7 +5651,7 @@
   },
   "animation.bfk.balisong.insp2.g3": {
    "animation_length": 2.0,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_pose": {
      "position": {
@@ -5847,31 +5799,31 @@
         0
        ]
       },
-      "0.867": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "1.050": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
       "1.650": {
+       "pre": [
+        0,
+        1000,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "1.767": {
+       "pre": [
+        0,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        1000,
+        0
+       ]
+      },
+      "1.883": {
        "pre": [
         0,
         1000,
@@ -5889,7 +5841,7 @@
   },
   "animation.bfk.balisong.insp2.g4": {
    "animation_length": 2.0,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_pose": {
      "position": {
@@ -6037,31 +5989,7 @@
         0
        ]
       },
-      "0.917": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "1.033": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
-      "1.650": {
+      "1.883": {
        "pre": [
         0,
         1000,
@@ -6079,7 +6007,7 @@
   },
   "animation.bfk.balisong.insp2.g5": {
    "animation_length": 2.0,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_pose": {
      "position": {
@@ -6227,30 +6155,6 @@
         0
        ]
       },
-      "1.650": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "1.767": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
       "1.883": {
        "pre": [
         0,
@@ -6269,7 +6173,7 @@
   },
   "animation.bfk.balisong.insp2.g6": {
    "animation_length": 2.0,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_pose": {
      "position": {
@@ -6417,30 +6321,6 @@
         0
        ]
       },
-      "1.650": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "1.750": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
       "1.883": {
        "pre": [
         0,
@@ -6459,7 +6339,7 @@
   },
   "animation.bfk.balisong.insp2.g7": {
    "animation_length": 2.0,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_pose": {
      "position": {
@@ -6625,7 +6505,7 @@
   },
   "animation.bfk.balisong.insp2.g8": {
    "animation_length": 2.0,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_pose": {
      "position": {
@@ -6791,7 +6671,7 @@
   },
   "animation.bfk.balisong.insp3.g1": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_safe": {
      "rotation": {
@@ -6973,7 +6853,7 @@
         0
        ]
       },
-      "0.267": {
+      "0.283": {
        "pre": [
         0,
         1000,
@@ -6985,31 +6865,7 @@
         0
        ]
       },
-      "0.483": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
-      "1.400": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "1.500": {
+      "0.417": {
        "pre": [
         0,
         0,
@@ -7039,7 +6895,7 @@
   },
   "animation.bfk.balisong.insp3.g2": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_safe": {
      "rotation": {
@@ -7221,31 +7077,7 @@
         0
        ]
       },
-      "0.283": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "0.400": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
-      "1.767": {
+      "1.800": {
        "pre": [
         0,
         1000,
@@ -7263,7 +7095,7 @@
   },
   "animation.bfk.balisong.insp3.g3": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_safe": {
      "rotation": {
@@ -7445,31 +7277,7 @@
         0
        ]
       },
-      "0.283": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "0.367": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
-      "1.800": {
+      "2.050": {
        "pre": [
         0,
         1000,
@@ -7487,7 +7295,7 @@
   },
   "animation.bfk.balisong.insp3.g4": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_safe": {
      "rotation": {
@@ -7669,7 +7477,7 @@
         0
        ]
       },
-      "1.800": {
+      "2.067": {
        "pre": [
         0,
         1000,
@@ -7687,7 +7495,7 @@
   },
   "animation.bfk.balisong.insp3.g5": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_safe": {
      "rotation": {
@@ -7869,7 +7677,7 @@
         0
        ]
       },
-      "2.050": {
+      "2.067": {
        "pre": [
         0,
         1000,
@@ -7887,7 +7695,7 @@
   },
   "animation.bfk.balisong.insp3.g6": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_safe": {
      "rotation": {
@@ -8087,7 +7895,7 @@
   },
   "animation.bfk.balisong.insp3.g7": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_safe": {
      "rotation": {
@@ -8287,7 +8095,7 @@
   },
   "animation.bfk.balisong.insp3.g8": {
    "animation_length": 2.2,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_safe": {
      "rotation": {
@@ -8487,7 +8295,7 @@
   },
   "animation.bfk.balisong.insp4.g1": {
    "animation_length": 2.4,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_bite": {
      "rotation": {
@@ -8711,7 +8519,7 @@
   },
   "animation.bfk.balisong.insp4.g2": {
    "animation_length": 2.4,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_bite": {
      "rotation": {
@@ -8917,7 +8725,31 @@
         0
        ]
       },
-      "1.850": {
+      "1.900": {
+       "pre": [
+        0,
+        1000,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "2.167": {
+       "pre": [
+        0,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        1000,
+        0
+       ]
+      },
+      "2.217": {
        "pre": [
         0,
         1000,
@@ -8935,7 +8767,7 @@
   },
   "animation.bfk.balisong.insp4.g3": {
    "animation_length": 2.4,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_bite": {
      "rotation": {
@@ -9141,7 +8973,31 @@
         0
        ]
       },
-      "1.883": {
+      "1.917": {
+       "pre": [
+        0,
+        1000,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "2.033": {
+       "pre": [
+        0,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        1000,
+        0
+       ]
+      },
+      "2.300": {
        "pre": [
         0,
         1000,
@@ -9159,7 +9015,7 @@
   },
   "animation.bfk.balisong.insp4.g4": {
    "animation_length": 2.4,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_bite": {
      "rotation": {
@@ -9365,31 +9221,7 @@
         0
        ]
       },
-      "1.900": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "2.100": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
-      "2.267": {
+      "2.300": {
        "pre": [
         0,
         1000,
@@ -9407,7 +9239,7 @@
   },
   "animation.bfk.balisong.insp4.g5": {
    "animation_length": 2.4,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_bite": {
      "rotation": {
@@ -9613,30 +9445,6 @@
         0
        ]
       },
-      "1.917": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "2.050": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
       "2.300": {
        "pre": [
         0,
@@ -9655,7 +9463,7 @@
   },
   "animation.bfk.balisong.insp4.g6": {
    "animation_length": 2.4,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_bite": {
      "rotation": {
@@ -9861,30 +9669,6 @@
         0
        ]
       },
-      "1.917": {
-       "pre": [
-        0,
-        1000,
-        0
-       ],
-       "post": [
-        0,
-        0,
-        0
-       ]
-      },
-      "2.017": {
-       "pre": [
-        0,
-        0,
-        0
-       ],
-       "post": [
-        0,
-        1000,
-        0
-       ]
-      },
       "2.300": {
        "pre": [
         0,
@@ -9903,7 +9687,7 @@
   },
   "animation.bfk.balisong.insp4.g7": {
    "animation_length": 2.4,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_bite": {
      "rotation": {
@@ -10127,7 +9911,7 @@
   },
   "animation.bfk.balisong.insp4.g8": {
    "animation_length": 2.4,
-   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_i * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_bite": {
      "rotation": {
@@ -10351,7 +10135,7 @@
   },
   "animation.bfk.balisong.swing1.g1": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_pose": {
      "rotation": {
@@ -10535,7 +10319,7 @@
   },
   "animation.bfk.balisong.swing1.g2": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_pose": {
      "rotation": {
@@ -10701,7 +10485,7 @@
         0
        ]
       },
-      "0.250": {
+      "0.233": {
        "pre": [
         0,
         1000,
@@ -10719,7 +10503,7 @@
   },
   "animation.bfk.balisong.swing1.g3": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_pose": {
      "rotation": {
@@ -10885,7 +10669,7 @@
         0
        ]
       },
-      "0.233": {
+      "0.250": {
        "pre": [
         0,
         1000,
@@ -10903,7 +10687,7 @@
   },
   "animation.bfk.balisong.swing1.g4": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_pose": {
      "rotation": {
@@ -11087,7 +10871,7 @@
   },
   "animation.bfk.balisong.swing1.g5": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_pose": {
      "rotation": {
@@ -11271,7 +11055,7 @@
   },
   "animation.bfk.balisong.swing1.g6": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_pose": {
      "rotation": {
@@ -11455,7 +11239,7 @@
   },
   "animation.bfk.balisong.swing1.g7": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_pose": {
      "rotation": {
@@ -11612,7 +11396,19 @@
       "0.000": {
        "pre": [
         0,
-        1000,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "0.017": {
+       "pre": [
+        0,
+        0,
         0
        ],
        "post": [
@@ -11639,7 +11435,7 @@
   },
   "animation.bfk.balisong.swing1.g8": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_pose": {
      "rotation": {
@@ -11796,7 +11592,19 @@
       "0.000": {
        "pre": [
         0,
-        1000,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "0.017": {
+       "pre": [
+        0,
+        0,
         0
        ],
        "post": [
@@ -11823,7 +11631,7 @@
   },
   "animation.bfk.balisong.swing2.g1": {
    "animation_length": 0.3,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_pose": {
      "position": {
@@ -11925,7 +11733,7 @@
         0
        ]
       },
-      "0.183": {
+      "0.267": {
        "pre": [
         0,
         1000,
@@ -11943,7 +11751,7 @@
   },
   "animation.bfk.balisong.swing2.g2": {
    "animation_length": 0.3,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_pose": {
      "position": {
@@ -12063,7 +11871,7 @@
   },
   "animation.bfk.balisong.swing2.g3": {
    "animation_length": 0.3,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_pose": {
      "position": {
@@ -12183,7 +11991,7 @@
   },
   "animation.bfk.balisong.swing2.g4": {
    "animation_length": 0.3,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_pose": {
      "position": {
@@ -12303,7 +12111,7 @@
   },
   "animation.bfk.balisong.swing2.g5": {
    "animation_length": 0.3,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_pose": {
      "position": {
@@ -12396,7 +12204,19 @@
       "0.000": {
        "pre": [
         0,
-        1000,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "0.033": {
+       "pre": [
+        0,
+        0,
         0
        ],
        "post": [
@@ -12423,7 +12243,7 @@
   },
   "animation.bfk.balisong.swing2.g6": {
    "animation_length": 0.3,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_pose": {
      "position": {
@@ -12543,7 +12363,7 @@
   },
   "animation.bfk.balisong.swing2.g7": {
    "animation_length": 0.3,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_pose": {
      "position": {
@@ -12663,7 +12483,7 @@
   },
   "animation.bfk.balisong.swing2.g8": {
    "animation_length": 0.3,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_pose": {
      "position": {
@@ -12756,7 +12576,19 @@
       "0.000": {
        "pre": [
         0,
-        1000,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "0.017": {
+       "pre": [
+        0,
+        0,
         0
        ],
        "post": [
@@ -12783,7 +12615,7 @@
   },
   "animation.bfk.balisong.swing3.g1": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_pose": {
      "rotation": {
@@ -12949,7 +12781,7 @@
         0
        ]
       },
-      "0.233": {
+      "0.250": {
        "pre": [
         0,
         1000,
@@ -12967,7 +12799,7 @@
   },
   "animation.bfk.balisong.swing3.g2": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_pose": {
      "rotation": {
@@ -13133,7 +12965,7 @@
         0
        ]
       },
-      "0.233": {
+      "0.250": {
        "pre": [
         0,
         1000,
@@ -13151,7 +12983,7 @@
   },
   "animation.bfk.balisong.swing3.g3": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_pose": {
      "rotation": {
@@ -13317,7 +13149,7 @@
         0
        ]
       },
-      "0.233": {
+      "0.250": {
        "pre": [
         0,
         1000,
@@ -13335,7 +13167,7 @@
   },
   "animation.bfk.balisong.swing3.g4": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_pose": {
      "rotation": {
@@ -13519,7 +13351,7 @@
   },
   "animation.bfk.balisong.swing3.g5": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_pose": {
      "rotation": {
@@ -13703,7 +13535,7 @@
   },
   "animation.bfk.balisong.swing3.g6": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_pose": {
      "rotation": {
@@ -13887,7 +13719,7 @@
   },
   "animation.bfk.balisong.swing3.g7": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_pose": {
      "rotation": {
@@ -14071,7 +13903,7 @@
   },
   "animation.bfk.balisong.swing3.g8": {
    "animation_length": 0.32,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_pose": {
      "rotation": {
@@ -14228,7 +14060,19 @@
       "0.000": {
        "pre": [
         0,
-        1000,
+        0,
+        0
+       ],
+       "post": [
+        0,
+        0,
+        0
+       ]
+      },
+      "0.017": {
+       "pre": [
+        0,
+        0,
         0
        ],
        "post": [
@@ -14255,7 +14099,7 @@
   },
   "animation.bfk.balisong.swing4.g1": {
    "animation_length": 0.5,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.020)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.035)",
    "bones": {
     "bfg1_safe": {
      "rotation": {
@@ -14457,7 +14301,7 @@
         0
        ]
       },
-      "0.350": {
+      "0.400": {
        "pre": [
         0,
         1000,
@@ -14475,7 +14319,7 @@
   },
   "animation.bfk.balisong.swing4.g2": {
    "animation_length": 0.5,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.040)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.070)",
    "bones": {
     "bfg2_safe": {
      "rotation": {
@@ -14695,7 +14539,7 @@
   },
   "animation.bfk.balisong.swing4.g3": {
    "animation_length": 0.5,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.060)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.105)",
    "bones": {
     "bfg3_safe": {
      "rotation": {
@@ -14915,7 +14759,7 @@
   },
   "animation.bfk.balisong.swing4.g4": {
    "animation_length": 0.5,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.080)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.140)",
    "bones": {
     "bfg4_safe": {
      "rotation": {
@@ -15135,7 +14979,7 @@
   },
   "animation.bfk.balisong.swing4.g5": {
    "animation_length": 0.5,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.100)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.175)",
    "bones": {
     "bfg5_safe": {
      "rotation": {
@@ -15355,7 +15199,7 @@
   },
   "animation.bfk.balisong.swing4.g6": {
    "animation_length": 0.5,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.120)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.210)",
    "bones": {
     "bfg6_safe": {
      "rotation": {
@@ -15575,7 +15419,7 @@
   },
   "animation.bfk.balisong.swing4.g7": {
    "animation_length": 0.5,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.140)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.245)",
    "bones": {
     "bfg7_safe": {
      "rotation": {
@@ -15795,7 +15639,7 @@
   },
   "animation.bfk.balisong.swing4.g8": {
    "animation_length": 0.5,
-   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.160)",
+   "anim_time_update": "math.max(0, v.bfk_a * v.bfk_spd - 0.280)",
    "bones": {
     "bfg8_safe": {
      "rotation": {
