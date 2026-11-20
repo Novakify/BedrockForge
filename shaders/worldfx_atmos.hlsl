@@ -1090,66 +1090,78 @@ float3 chroma(float3 c, float3 P, bool sky, float spareC) {
     float3 vivid = max(lerp(lc.xxx, c, 2.2), 0.0) * 1.15 + 0.02;                      // the spreading edge, saturated and lit
     return lerp(o, vivid, saturate(rim) * (1.0 - saturate(k)) * 0.35);   // a soft bloom of colour at the spreading edge only
 }
-// Radiance, round 2 (Fernando 2026-11-20: "barely works, undetailed, ugly"). Was: a 1-colour line on the body's own
-// edge pixels. Now an aura AROUND the body: a crisp bright line on the silhouette, a soft glow that spills outward over
-// what is behind it (three rings of taps), a thin inner rim, and energy flowing along it - the colour sweeping into a
-// second hue and back, brighter streaks running upward. Only pixels whose ray passes near a player / mob do any work.
-float3 posAt(int2 p);
-float radBody(int2 q, int ai, float zMax) {   // 1 if pixel q is on actor ai's body and nearer than zMax
-    float d = rawDepth(q);
-    if (isSky(d)) return 0.0;
-    float3 w = posAt(q);
-    if (dot(w, w) > zMax * zMax) return 0.0;
-    float3 dd = w - aPos[ai].xyz;
-    if (dd.y < 0.25 || dd.y > aDim[ai].x) return 0.0;
-    return length(dd.xz) < aPos[ai].w - 0.15 ? 1.0 : 0.0;
+// Radiance, round 3 (Fernando 2026-11-20: "v2 looks super ugly - it should look like a lighter version of our
+// Ascension aura, not as crazy but very similar, colour customisable, glow"). Every nearby player / mob wears a soft
+// flame aura in the Radiance colour: the Ascension shell (body outline grown out, tongues streaming up, a hot rim)
+// at about half the strength, no crown spikes or electricity, a few rising motes, a faint glow on the ground.
+float3 radFlame(float3 B, float Hh, float3 rd, float dist, float t, float3 col, float seed) {
+    float3 L = 0;
+    float  body = 0.24 + 0.14 * Hh;
+    float3 v = float3(0, Hh + 0.9, 0), A = B;
+    float  b = dot(rd, v), c = dot(v, v), d = dot(rd, -A), e = dot(v, -A);
+    float  den = c - b * b;
+    if (den < 1e-5) return L;
+    float  hu = (e - b * d) / den;
+    if (hu > 1.02 || hu < -0.03) return L;
+    float  h = saturate(hu);
+    float  sc = max(b * h - d, 0.0);
+    float3 Q = A + v * h, Pr = rd * sc;
+    float3 right = cross(float3(0, 1, 0), rd);
+    right = dot(right, right) > 1e-4 ? normalize(right) : float3(1, 0, 0);
+    float  x = dot(Pr - Q, right), ax = abs(x);
+    float  y = hu * (Hh + 0.9);
+    if (ax > body * 2.6 + 0.3 || sc < 0.3) return L;
+    float  steep = smoothstep(0.80, 0.55, abs(rd.y));
+    if (steep <= 0.0 || dist < sc - 1.0) return L;
+    float  front = (dist < sc - 0.2 ? 0.5 : 1.0) * steep;
+    float  spd = max(rad1.z, 0.2);
+    float  top = Hh + 0.55;
+    float  prof = y < Hh * 0.85 ? body * (0.85 + 0.15 * saturate((y + 0.1) / 0.8)) : body * pow(saturate((top - y) / (top - Hh * 0.85)), 0.8);
+    float  n1 = ascFbm(float2(ax * 2.4 + 3.0 + seed, y * 1.7 - t * 3.0 * spd));
+    float  up = saturate((y - 0.5) / 1.4);
+    float  R = (prof + body * (0.30 * (n1 - 0.5) + pow(saturate(n1 - 0.5), 1.5) * 0.9 * up)) * saturate((top + 0.2 - y) / 0.5);
+    float  f = (R - ax) / body;
+    float  lowF = saturate((y + 0.1) / 0.4) * smoothstep(top, top - 0.6, y);   // (no hairline point at the top)
+    if (f > -1.2) {
+        float streak = pow(saturate(ascFbm(float2(x * 6.0 + seed, y * 0.8 - t * 4.2 * spd)) * 1.4 - 0.35), 2.0);
+        float dens = pow(saturate((f + 0.10) / 0.5), 1.3) * (0.25 + 0.75 * streak);
+        float edge = exp(-pow((f - 0.02) / 0.15, 2.0));
+        float halo = f < 0.0 ? exp(f / 0.30) : 1.0;
+        float3 hot = lerp(col, float3(1, 1, 1), 0.55);
+        L += (col * (dens * 0.40 + edge * 0.40) + hot * edge * 0.30 + col * halo * 0.16 * (0.4 + rad1.x)) * lowF * front * (0.7 + 0.6 * rad1.x);
+    }
+    {   // a few motes rising through it
+        float2 m = float2(x, y + t * 0.9 * spd) * float2(5.0, 3.0);
+        float2 mi = floor(m + seed * 17.0), mf = frac(m) - 0.5;
+        float  hs = hash12b(mi);
+        if (hs > 0.90 && ax < body * 1.5 && y > 0.0 && y < top) {
+            float2 o = (float2(hash12b(mi + 3.1), hash12b(mi + 7.3)) - 0.5) * 0.6;
+            L += lerp(col, 1.0, 0.6) * exp(-dot(mf - o, mf - o) * 160.0) * smoothstep(top, top * 0.7, y) * 0.9 * front;
+        }
+    }
+    return L;
 }
 float3 radiance(int2 p, float3 P, float zc) {
     int n = min(int(aInfo.x), 24);
     float3 rdv = normalize(P);
-    int ai = -1; float bestT = 1e9;
-    [loop] for (int i = 0; i < n; ++i) {                     // the actor this pixel's ray passes closest to (if any)
-        float3 c = aPos[i].xyz + float3(0, aDim[i].x * 0.5, 0);
-        float tc = dot(c, rdv);
-        if (tc < 0.5) continue;
-        float3 off = rdv * tc - c;
-        float2 h = float2(length(off.xz), abs(off.y));
-        if (h.x > aPos[i].w + 0.5 || h.y > aDim[i].x * 0.5 + 0.5) continue;
-        if (tc < bestT) { bestT = tc; ai = i; }
+    float  dist = length(P);
+    float3 L = 0;
+    float  t = c2.w;
+    [loop] for (int i = 0; i < n; ++i) {
+        float  Hh = clamp(fmod(aDim[i].w, 1000.0), 0.5, 3.0);
+        float3 B = aPos[i].xyz + float3(0, 0.1, 0);
+        float3 cc = B + float3(0, Hh * 0.5, 0);
+        if (length(cc.xz) < 0.7 && cc.y > -2.2 && cc.y < 0.2) continue;   // you, seen from your own eyes
+        float  tc = dot(cc, rdv);
+        if (tc < 0.3) continue;
+        float3 off = rdv * tc - cc;
+        if (dot(off, off) > (Hh * 0.5 + 1.4) * (Hh * 0.5 + 1.4)) continue;   // the ray passes nowhere near it
+        L += radFlame(B, Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37);
+        // its light on the ground round its feet
+        float3 g = P - B;
+        if (abs(g.y + 0.1) < 0.5) L += rad0.rgb * 0.18 * (0.4 + rad1.x) * exp(-dot(g.xz, g.xz) / 0.9) * smoothstep(0.5, 0.0, abs(g.y + 0.1));
     }
-    if (ai < 0) return 0;
-    float sc = max(rad0.w, 1.0) * c4.y / 1080.0;               // widths follow the screen
-    float zSelf = length(P);
-    bool  body = radBody(p, ai, zSelf + 0.01) > 0.5;
-    float t = c2.w * max(rad1.z, 0.2);
-    float3 hue2 = rad0.rgb.gbr * 0.6 + rad0.rgb * 0.4;          // the second hue the energy sweeps into
-    float  lineK = 0.0, glow = 0.0, inner = 0.0;
-    float  ga = ign(float2(p)) * 0.8;
-    [unroll] for (int k = 0; k < 8; ++k) {
-        float a = ga + float(k) * 0.785398;
-        float2 dir = float2(cos(a), sin(a));
-        if (body) {                                              // on the body: how far in from the edge
-            float o1 = 1.0 - radBody(p + int2(dir * 1.5 * sc), ai, 1e4);
-            float o2 = 1.0 - radBody(p + int2(dir * 4.0 * sc), ai, 1e4);
-            lineK  = max(lineK, o1);
-            inner = max(inner, o2 * 0.45);
-        } else {                                                 // around it: the glow spilling out over what is behind
-            [unroll] for (int r = 0; r < 3; ++r) {
-                float rr = (r == 0 ? 2.0 : r == 1 ? 7.0 : 16.0) * sc;
-                float b = radBody(p + int2(dir * rr), ai, zSelf - 0.5);
-                if (b > 0.5) { glow = max(glow, r == 0 ? 1.0 : r == 1 ? 0.6 : 0.28); if (r == 0) lineK = max(lineK, 0.6); }
-            }
-        }
-    }
-    float3 wp = P + c5.xyz;
-    float  flowA = 0.5 + 0.5 * sin(t * 2.2 + wp.y * 2.5 + atan2(P.z - aPos[ai].z, P.x - aPos[ai].x) * 2.0);
-    float  streak = pow(saturate(sin(wp.y * 7.0 - t * 6.0 + aPos[ai].x * 3.0) * 0.5 + 0.5), 12.0);
-    float3 col = lerp(rad0.rgb, hue2, flowA * 0.6);
-    float3 o = col * glow * (0.7 + 1.3 * rad1.x) * (0.8 + 0.6 * streak)
-             + lerp(col, 1.0, 0.2) * lineK * (2.2 + 1.5 * rad1.x) * (0.85 + 0.5 * streak)
-             + col * inner * 0.6;
-    if (body) o += col * rad1.y * 0.18 * (0.7 + 0.3 * flowA);   // the fill
-    return o;
+    return L;
 }
 // weather: drops / flakes / embers in 1.5-block cells along the view ray (a DDA like the ambience), depth-tested
 // weather (audit 2: the 3D cell walk cost 1.9 ms and still read as a few stray streaks): rain / snow / embers on
