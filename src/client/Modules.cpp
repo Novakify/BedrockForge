@@ -838,6 +838,7 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
     ++gCombo;
     gComboAt = nowMs();
     ::bf::lyrics::win::noteCombat(); // LyricsFlow Combat Safe: dim lyrics for a moment after a hit
+    try { matchfx::noteHit(uint64_t(target.getRuntimeID().rawID)); } catch (...) {}   // [Cute World] their face reacts
     try {   // Target HUD: who we are fighting
         int64_t const id = target.getOrCreateUniqueID().rawID;
         if (id != gTargetId.load()) gTargetHits = 0;
