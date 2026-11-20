@@ -79,7 +79,7 @@ __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
 // sharp - the camera's motion says nothing about how THEY move on screen. Upright cylinders, world space.
 struct BfBlurActorsV1 {
     uint32_t size, version, count, frame;
-    struct A { float x, y, z; float r, h; float pad[3]; } a[32];   // feet centre, radius, height; pad: head yaw (rad), 1 + face (0-11) + 100 * reaction (0 none, 1 startled, 2 shy, 3 mad) (0 = yaw unknown), real height (+1000: a player)
+    struct A { float x, y, z; float r, h; float pad[3]; } a[32];   // feet centre, radius, height; pad: head yaw (rad), 1 + face (0-21) + 100 * combat face (0 none, 1-12; for 8 s after a hit) + 10000 * just hit (0 = yaw unknown), real height (+1000: a player)
 };
 __declspec(dllexport) BfBlurActorsV1 const* BF_GetBlurActors();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);

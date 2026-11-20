@@ -840,16 +840,20 @@ void blurActorsFrame(LocalPlayer& lp, bool cuteOn) {
                     uint64_t rid = 0;
                     try { rid = uint64_t(a->getRuntimeID().rawID); } catch (...) {}
                     uint64_t hsh = rid * 0x9E3779B97F4A7C15ull;
-                    int const face = int((hsh >> 33) % 12ull);
+                    int const face = int((hsh >> 33) % 22ull);   // their own face (of 22)
                     HurtMark* hm = hurtSlot(rid, true);
                     try {
                         float const hp = float(a->getHealth());
                         if (hm->hp >= 0.f && hp < hm->hp - 0.01f) { hm->at = nowMs(); ++hm->salt; }
                         hm->hp = hp;
                     } catch (...) {}
-                    int react = 0;
-                    if (hm->at > 0 && nowMs() - hm->at < 700) react = 1 + int(((hsh >> 17) + hm->salt * 2654435761ull) % 3ull);
-                    e.pad[1] = 1.0f + float(face) + 100.0f * float(react);
+                    // in a fight (hit in the last 8 s): a combat face (of 12), a new random one every hit; the first 0.45 s shake
+                    int combat = 0, fresh = 0;
+                    if (hm->at > 0 && nowMs() - hm->at < 8000) {
+                        combat = 1 + int(((hsh >> 11) ^ (uint64_t(hm->salt) * 0x9E3779B97F4A7C15ull)) % 12ull);
+                        fresh = nowMs() - hm->at < 450 ? 1 : 0;
+                    }
+                    e.pad[1] = 1.0f + float(face) + 100.0f * float(combat) + 10000.0f * float(fresh);
                 }
             }
     } catch (...) { o.count = 0; }
