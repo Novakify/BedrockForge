@@ -2183,9 +2183,9 @@ float3 cuteEyes(float3 o, float3 P) {
         float3 lp = P - hc;
         if (dot(lp, lp) > 0.6) continue;
         float z = dot(lp, fwd), x = dot(lp, side) / hs, y = dot(lp, upv) / hs;
-        float zLo = humanoid ? 0.8 : 0.3, zHi = humanoid ? 1.3 : 2.2;
+        float zLo = humanoid ? 0.75 : 0.3, zHi = humanoid ? 1.45 : 2.2;   // (players: room for the hat layer and 3D-skin faces)
         if (z < hs * zLo || z > hs * zHi || abs(x) > 1.0 || abs(y) > 1.0) continue;   // only the front face
-        if (fresh > 0.5) { float2 j = float2(sin(c2.w * 60.0), cos(c2.w * 47.0)) * 0.03; x += j.x; y += j.y; }   // a shake right after a hit   // a little shake
+        if (fresh > 0.5) { float2 j = float2(sin(c2.w * 38.0), cos(c2.w * 29.0)) * 0.012; x += j.x; y += j.y; }   // a shake right after a hit   // a little shake
         // (quality pass, Fernando: "pixelated, low res") 4x rotated-grid supersampling of the face, edges softened by
         // the real pixel size: smooth up close and far away
         float fpx = length(P) * 2.0 * c1.w / c4.y / hs;           // one screen pixel, in face units

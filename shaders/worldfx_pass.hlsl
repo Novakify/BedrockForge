@@ -1538,12 +1538,9 @@ float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
             float age = eA[i].w, who = eC[i].z;
             float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
             team = team / max(max(team.r, max(team.g, team.b)), 0.05);
-            if (who > 1.5) {   // you were hit: a thin flash on the edge of the view
-                float edge = smoothstep(0.86, 0.62, dot(rd, c0.xyz));
-                add += lerp(team, float3(1, 0.3, 0.2), 0.5) * edge * exp(-age * 14.0) * 0.45;
-                continue;
-            }
-            if (who < 0.5 || age > 0.2) continue;
+            // (Fernando 2026-11-20 on Hive: "the pink hue pulse is back, going crazy randomly" = this edge flash on every
+            //  hit you take; "weird white streaks when hitting" = the crescent below. Both off: clean PvP.)
+            continue;
             // your hit: a crescent of light across the victim, angled by your swing (view yaw), drawn in 0.08 s
             float3 c = eA[i].xyz + float3(0.5, 1.15, 0.5) - CAM;
             float  tc = dot(c, rd);
@@ -1584,7 +1581,8 @@ float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
     }
     if (c10.z < 0.5) o = tensionOver(o, rd, sceneT);
     // (slashFx: off - Fernando: it gets in the way in PvP)
-    [branch] if (m1.z > 0.5) o = impactFrame(o, rd, sceneT);
+    // (crit impact frames off - Fernando 2026-11-20: "a random white flicker every 20-40 s" = every crit you land)
+    // [branch] if (m1.z > 0.5) o = impactFrame(o, rd, sceneT);
     [branch] if (c3.y > 0.0) o = pow(pow(max(o, 0.0), 2.2) + airLife(rd, sceneT), 1.0 / 2.2);
     [branch] if (m3.z > 0.0) o = vitals(o, rd);
     return o;
@@ -1825,7 +1823,7 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
     float tMax = z < 25.0 ? 30.0 : (z < 60.0 ? 26.0 : 18.0);   // the low sun throws long shadows: ~1 block steps
     // (Novak: at full night the light is the city's neon, not the moon - the shadow walk is skipped and its ~0.8 ms
     //  goes back to the frame rate)
-    [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 140.0 && !(NG_IS && NIGHT > 0.85)) {
+    [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 95.0 && !(NG_IS && NIGHT > 0.85)) {
         [loop] for (int k = 0; k < nSh; k += shStride) {
             float f = (float(k) + j) / float(nSh);
             float t = 0.04 + tMax * f * sqrt(f);
@@ -1835,9 +1833,10 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
             float sd = rawDepth(int2(s.xy));
             if (isSky(sd)) continue;
             float diff = s.z - viewZ(sd);
-            if (diff > 0.03 + 0.012 * t + 0.0015 * z && diff < 2.5 + 0.08 * t) { vis = 0.0; break; }
+            // (far bias grows with the depth buffer's coarseness: z^2 - Fernando: distant shadows flickered)
+            if (diff > 0.03 + 0.012 * t + 0.004 * z + 0.00004 * z * z && diff < 2.5 + 0.08 * t) { vis = 0.0; break; }
         }
-        vis = lerp(1.0, vis, saturate(1.0 - (z - 90.0) / 60.0));   // far away the depth buffer is too coarse: fade out
+        vis = lerp(1.0, vis, saturate(1.0 - (z - 55.0) / 40.0));   // far away the depth buffer is too coarse and 5-7 steps alias: fade out by 95   // far away the depth buffer is too coarse: fade out
     }
     float lit = smoothstep(0.02, 0.25, ndl);                  // faces turned away were already shaded by the block shader
 

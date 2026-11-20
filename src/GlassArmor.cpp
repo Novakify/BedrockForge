@@ -979,7 +979,10 @@ ComPtr<ID3D12PipelineState> makeItemPso(ID3D12Device* dev, ActorDesc const& ad, 
     d.PS             = actorOrder ? D3D12_SHADER_BYTECODE{shaders::kGlassItemActorPs, sizeof(shaders::kGlassItemActorPs)}
                                   : D3D12_SHADER_BYTECODE{shaders::kGlassItemPs, sizeof(shaders::kGlassItemPs)};
     auto& rt = d.BlendState.RenderTarget[0];
-    rt.BlendEnable = FALSE, rt.LogicOpEnable = FALSE, rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    // alpha = how much glass (the shader fades it out on items too small on screen to hold it: they sparkled)
+    rt.BlendEnable = TRUE, rt.LogicOpEnable = FALSE, rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    rt.SrcBlend = D3D12_BLEND_SRC_ALPHA, rt.DestBlend = D3D12_BLEND_INV_SRC_ALPHA, rt.BlendOp = D3D12_BLEND_OP_ADD;
+    rt.SrcBlendAlpha = D3D12_BLEND_ZERO, rt.DestBlendAlpha = D3D12_BLEND_ONE, rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
     d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     // the game's item now draws first (never invisible) and the glass lands on the same depth over it
     d.DepthStencilState.DepthEnable    = TRUE;
@@ -1696,6 +1699,12 @@ ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12Pipeline
             // ...and only the flat sprite items (ItemInHandColor*). ItemInHandTextured is the BLOCK you hold (36 indices, the
             // terrain atlas): as glass it was a see-through box in your hand - Fernando 2026-11-19, seen in third person.
             if (pi == gPsos.end() || nameOf(pi->second.ps).find("ItemInHandColor") == std::string::npos) { ++gItemWhy[0]; return nullptr; }
+            // ...never the enchantment glint layer (ItemInHandColorGlint*: drawn additively over the item on equal depth -
+            // replayed as opaque glass it covered the item some frames and not others: the enchanted pickaxe flickered on
+            // Hive, 2026-11-20) - nor any blended / depth-equal pass of the item
+            if (nameOf(pi->second.ps).find("Glint") != std::string::npos ||
+                t->second->d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_EQUAL ||
+                (t->second->d.BlendState.RenderTarget[0].BlendEnable && t->second->d.BlendState.RenderTarget[0].DestBlend == D3D12_BLEND_ONE)) { ++gItemWhy[0]; return nullptr; }
             ad = t->second;
         } else ad = a->second;
     }
