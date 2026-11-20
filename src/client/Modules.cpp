@@ -470,7 +470,8 @@ void atmosTick() {
         {
             bool const rainOn = wx && wx->enabled && int(wx->num("mode", 0)) == 0;
             float const vol = rainOn ? wx->num("sounds", 0.5f) : 0.f;
-            try { weathersounds::rain(rainOn ? vol * std::clamp(0.35f + 0.4f * wx->num("intensity", 1.f), 0.f, 1.f) * 0.6f : 0.f); } catch (...) {}
+            // (rain loop removed - Fernando 2026-11-20: "a weird noise that sounds nothing like rain"; thunder stays)
+            try { weathersounds::rain(0.f); } catch (...) {}
             static int64_t nextStrike = 0, lastStrike = 0, thunderAt = 0;
             static float az = 0.f, nearK = 0.5f;
             static uint32_t rs = 0x9e3779b9u;
