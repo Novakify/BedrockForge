@@ -46,6 +46,22 @@
       "Geometry.balisong_ghost",
       "Geometry.dagger_ghost"
      ]
+    },
+    "textures": {
+     "Array.gtex": [
+      "Texture.karambit_ghost",
+      "Texture.karambit_blackout_ghost",
+      "Texture.karambit_gold_ghost",
+      "Texture.karambit_fade_ghost",
+      "Texture.balisong_ghost",
+      "Texture.balisong_blackout_ghost",
+      "Texture.balisong_gold_ghost",
+      "Texture.balisong_fade_ghost",
+      "Texture.dagger_ghost",
+      "Texture.dagger_blackout_ghost",
+      "Texture.dagger_gold_ghost",
+      "Texture.dagger_fade_ghost"
+     ]
     }
    },
    "geometry": "Array.ggeo[v.bfk - 1]",
@@ -55,7 +71,7 @@
     }
    ],
    "textures": [
-    "Texture.bfk_ghost"
+    "Array.gtex[(v.bfk - 1) * 4 + v.bfk_fin]"
    ]
   }
  }

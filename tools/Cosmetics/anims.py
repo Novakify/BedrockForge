@@ -250,8 +250,8 @@ def slash_style(trail, style):
 GLINT_AT = {"draw": 0.8, "insp1": 0.6, "insp2": 0.6, "insp3": 0.66, "insp4": 0.5}   # share of the clip where the edge catches the light
 
 
-GHOSTS = 8            # afterimage copies per knife
-GHOST_DT = 0.02       # seconds between copies (8 x 20 ms: the trail covers the last 160 ms of motion)
+GHOSTS = 12           # afterimage copies per knife (12: reads as a smooth blur, not separate copies)
+GHOST_DT = 0.025      # seconds between copies (12 x 25 ms: the last 300 ms of motion)
 
 
 def ghost_bone(bone, g):

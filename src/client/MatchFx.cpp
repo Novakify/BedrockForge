@@ -834,7 +834,14 @@ void blurActorsFrame(LocalPlayer& lp, bool cuteOn) {
                 e.r = std::max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) * 0.5f + (player ? 0.45f : 0.2f) + lagH;
                 e.h = (bb.max.y - bb.min.y) + 0.45f + 2.0f * lagV;
                 // [Cute World] where its face points (head yaw, radians) and its real box, so RF can paint anime eyes on it
-                try { e.pad[0] = a->getRotation().y * 3.14159265f / 180.0f; e.pad[1] = 1.0f; } catch (...) { e.pad[1] = 0.0f; }
+                // (in game: the face slid down when looking up, and on a mob it sat on the side / back of the head - the body
+                //  yaw is not where the head looks) head yaw + pitch, packed: yaw (rad, -pi..pi) + 10 * (pitch deg + 90)
+                try {
+                    float yawD = a->getInterpolatedHeadRot(1.0f), pitchD = a->getRotation().x;
+                    float yr = std::remainder(yawD, 360.0f) * 3.14159265f / 180.0f;
+                    e.pad[0] = yr + 10.0f * std::round(std::clamp(pitchD, -90.0f, 90.0f) + 90.0f);
+                    e.pad[1] = 1.0f;
+                } catch (...) { e.pad[1] = 0.0f; }
                 e.pad[2] = (bb.max.y - bb.min.y) + (player ? 1000.0f : 0.0f);   // real height (+1000: a player)
                 if (cuteOn && e.pad[1] > 0.5f) {   // which face (one of 12, stays theirs) + a reaction while just hurt (1 startled, 2 shy, 3 mad)
                     uint64_t rid = 0;
