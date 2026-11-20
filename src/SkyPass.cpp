@@ -136,7 +136,7 @@ struct AtmosSet {
     float bkMode = 0.0f, bkDist = 24.0f, bkBand = 0.26f, bkBlur = 0.5f, bkHi = 0.6f, bkFringe = 0.45f;
     bool  cy = false, cySky = true, cu = false;   // [Purxiy] Cyberspace / Cute World
     float cyC[3]{0.2f, 0.9f, 1.0f}, cyReality = 0.85f, cyGlow = 1.0f, cyCircuits = 1.0f, cyScan = 6.0f;
-    float cuC[3]{1.0f, 0.55f, 0.75f}, cuSoft = 0.7f, cuHearts = 1.0f, cuSparkle = 1.0f, cuPastel = 1.0f;
+    float cuC[3]{1.0f, 0.55f, 0.75f}, cuSoft = 0.7f, cuHearts = 1.0f, cuSparkle = 1.0f, cuPastel = 1.0f; bool cuEyes = true;
     bool  post() const { return chroma || rad || wx || bk || cy || cu; }
     bool  pa = false, paBreak = true;
     float paC[3]{0.78f, 0.42f, 1.0f}, paDur = 0.34f, paGlow = 0.6f;
@@ -238,7 +238,7 @@ void pollAtmos() {
         else if (k == "cy_reality") rd(a.cyReality); else if (k == "cy_glow") rd(a.cyGlow); else if (k == "cy_circuits") rd(a.cyCircuits);
         else if (k == "cy_scan") rd(a.cyScan); else if (k == "cy_sky") { int v = 1; in >> v; a.cySky = v != 0; }
         else if (k == "cu") { int v = 0; in >> v; a.cu = v != 0; } else if (k == "cu_c") rd3(a.cuC);
-        else if (k == "cu_soft") rd(a.cuSoft); else if (k == "cu_hearts") rd(a.cuHearts); else if (k == "cu_sparkle") rd(a.cuSparkle); else if (k == "cu_pastel") rd(a.cuPastel);
+        else if (k == "cu_soft") rd(a.cuSoft); else if (k == "cu_hearts") rd(a.cuHearts); else if (k == "cu_sparkle") rd(a.cuSparkle); else if (k == "cu_pastel") rd(a.cuPastel); else if (k == "cu_eyes") { int v = 1; in >> v; a.cuEyes = v != 0; }
         else if (k == "pano_capture") { int v = 0; in >> v; rf::pano::request(v); }
         else if (k == "freelook") { int key = 0, mode = 0; float dist = 4.0f; in >> key >> mode >> dist; rf::spatialcam::setFreelook(key, mode, dist); }
         else if (k == "wg") { int v = 0; in >> v; a.wg = v != 0; } else if (k == "wg_c") rd3(a.wgC);
@@ -3403,6 +3403,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 if (dx * dx + dz * dz < (e.r + 0.35f) * (e.r + 0.35f) && dy < 0.3f && dy + e.h > -0.3f) continue;   // the camera is in it: you, first person
                 if (dx * dx + dy * dy + dz * dz > 70.0f * 70.0f) continue;
                 acb.pos[n][0] = dx; acb.pos[n][1] = dy; acb.pos[n][2] = dz; acb.pos[n][3] = e.r; acb.dim[n][0] = e.h;
+                acb.dim[n][1] = e.pad[0]; acb.dim[n][2] = e.pad[1]; acb.dim[n][3] = e.pad[2];   // [Cute World] head yaw, yaw known, real height (+1000 player)
                 ++n;
             }
             acb.info[0] = float(n);
@@ -3457,7 +3458,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             }
             if (atm.cu) {
                 for (int k = 0; k < 3; ++k) acb.cu[0][k] = lin(atm.cuC[k]);
-                acb.cu[0][3] = atm.cuSoft; acb.cu[1][0] = atm.cuHearts; acb.cu[1][1] = atm.cuSparkle; acb.cu[1][2] = atm.cuPastel; acb.cu[1][3] = 1.f;
+                acb.cu[0][3] = atm.cuSoft; acb.cu[1][0] = atm.cuHearts; acb.cu[1][1] = atm.cuSparkle; acb.cu[1][2] = atm.cuPastel; acb.cu[1][3] = atm.cuEyes ? 2.f : 1.f;   // 2: anime eyes on faces
             }
             if (atm.bo && ev && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx) && !rf::pano::capturing()) {   // (not baked into the title-screen capture)
                 static double gx = 0, gy = 0, gz = 0; static float fade = 0; static int64_t lt = 0; static bool have = false;

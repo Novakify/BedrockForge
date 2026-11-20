@@ -1838,6 +1838,59 @@ float3 cyIntro(float3 L, int2 px, float age) {
     return L;
 }
 
+// [Cute World] anime eyes (Fernando: "make it doable in Hive, it would be super funny"). BF sends each nearby player /
+// mob's head yaw and real height; on the front face of its head (the top of its box) we paint two big sparkly anime eyes
+// (dark lash rim, a gradient iris, a pupil, two white highlights), pink blush with little shine lines and a tiny cat smile.
+float3 cuteEyes(float3 o, float3 P) {
+    int n = min(int(aInfo.x + 0.5), 24);
+    [loop] for (int i = 0; i < n; ++i) {
+        if (aDim[i].z < 0.5) continue;
+        float realH = fmod(aDim[i].w, 1000.0);
+        bool  player = aDim[i].w >= 999.0;
+        float hs = player ? 0.25 : clamp(realH * 0.16, 0.16, 0.30);        // half the head's size
+        float3 hc = aPos[i].xyz + float3(0, 0.1 + realH + (player ? 0.075 : 0.0) - hs, 0);   // (a player model stands 1.875, its box 1.8)
+        float3 lp = P - hc;
+        if (dot(lp, lp) > 0.6) continue;
+        float yaw = aDim[i].y;
+        float3 fwd = float3(-sin(yaw), 0, cos(yaw)), side = float3(cos(yaw), 0, sin(yaw));
+        float z = dot(lp, fwd), x = dot(lp, side) / hs, y = lp.y / hs;
+        if (z < hs * 0.80 || z > hs * 1.25 || abs(x) > 1.0 || abs(y) > 1.0) continue;   // only the front face
+        float3 c = o;
+        // blush
+        [unroll] for (int b = -1; b <= 1; b += 2) {
+            float2 bq = float2(x - float(b) * 0.62, y + 0.38) / float2(0.24, 0.12);
+            c = lerp(c, float3(1.0, 0.45, 0.62), exp(-dot(bq, bq)) * 0.55);
+            [unroll] for (int l = 0; l < 3; ++l) {                                        // the little shine strokes
+                float2 lq = float2(x - float(b) * 0.62 - (float(l) - 1.0) * 0.09, y + 0.38);
+                float ln = abs(lq.x + lq.y * 0.6) < 0.018 && abs(lq.y) < 0.06 ? 1.0 : 0.0;
+                c = lerp(c, float3(1.0, 0.85, 0.9), ln * 0.8);
+            }
+        }
+        // eyes
+        [unroll] for (int e = -1; e <= 1; e += 2) {
+            float2 q = float2(x - float(e) * 0.42, y - 0.02);
+            float2 eq = q / float2(0.24, 0.34);
+            float  r = length(eq);
+            if (r < 1.12) {
+                float3 iris = lerp(lerp(float3(0.10, 0.06, 0.30), cu0.rgb, 0.35), float3(0.55, 0.85, 1.0), saturate(-q.y * 2.0 + 0.3));
+                float3 ec = r > 0.92 ? float3(0.06, 0.03, 0.10) : iris;                    // lash rim
+                if (q.y > 0.22 && r > 0.80) ec = float3(0.03, 0.02, 0.06);                   // thick top lash
+                float pr = length(q / float2(0.10, 0.15));
+                ec = lerp(ec, float3(0.04, 0.02, 0.10), smoothstep(1.0, 0.85, pr));        // pupil
+                float h1 = length(q - float2(-0.07 * float(e), 0.11)) / 0.07, h2 = length(q - float2(0.06 * float(e), -0.13)) / 0.035;
+                ec = lerp(ec, float3(1.0, 1.0, 1.0), max(smoothstep(1.0, 0.8, h1), smoothstep(1.0, 0.75, h2)));   // sparkles
+                c = lerp(c, ec, smoothstep(1.12, 1.0, r));
+            }
+        }
+        // a tiny cat smile ("w")
+        float2 m = float2(x, y + 0.55);
+        float w = abs(abs(m.x) - 0.07) ;
+        float mouth = (abs(m.y - (0.035 - w * w * 6.0)) < 0.022 && abs(m.x) < 0.15) ? 1.0 : 0.0;
+        c = lerp(c, float3(0.20, 0.05, 0.10), mouth);
+        o = c;
+    }
+    return o;
+}
 // ---- [Purxiy] Cute World: a soft pastel world with drifting hearts and little sparkles. Original code.
 float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
     float soft = saturate(cu0.w);
@@ -1846,6 +1899,7 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
     float3 pastel = lerp(L, lumC * float3(1.0, 0.84, 0.95) + 0.12, 0.42 * cu1.z) * (0.94 + 0.08 * soft);
     pastel = lerp(pastel, sqrt(max(pastel, 0.0)) * 0.95, 0.25 * soft);
     float3 o = lerp(L, pastel, cu1.z > 0.0 ? 1.0 : 0.0);
+    [branch] if (!sky && cu1.w > 1.5) o = cuteEyes(o, P);
     // hearts drifting up in the air around you (a few per cell of a 3-block grid, depth-tested)
     float3 hl = 0;
     [unroll] for (int k = 1; k <= 4; ++k) {   // (2026-11-19: bigger, glossier, more of them - they were specks)
