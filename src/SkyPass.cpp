@@ -2970,7 +2970,18 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     float const blurMove = rf::postfx::motionBlurMove() >= 0.0f ? std::min(rf::postfx::motionBlurMove(), 1.5f) : look.blurMove;   // the client menu's slider wins over F6
     float blurFrac = 0.0f;
     if (strength > 0.0f) blurFrac = std::min(0.6f * strength, 0.006f * strength / bc.avgDt);
-    if (rf::pano::capturing()) blurFrac = 0.0f;   // [Main Menu] the camera jumps 90 degrees per face: no smear in the panorama   // 60% of the gap at strength 1, never more than 6 ms of motion
+    if (rf::pano::capturing()) blurFrac = 0.0f;
+    // (Fernando 2026-11-19: "every time I use motion blur it's broken or costs a lot of FPS - Blueberry's is buttery
+    //  with zero FPS drop". Blueberry-style Smooth = FRAME BLENDING: each frame keeps a share of the one before (an
+    //  exponential trail in time). No per-pixel gather, no velocity, no depth tests: one frame copy + one full-screen
+    //  blend, ~0.1 ms at 1440p. The share follows the frame time, so the trail lasts the same ~ms at 60 or 240 FPS.)
+    int const blurStyle = rf::postfx::motionBlurStyle() >= 0.0f ? int(rf::postfx::motionBlurStyle() + 0.5f) : look.blurStyle;
+    float blendA = 0.0f;
+    if (strength > 0.0f && blurStyle == 0 && !rf::pano::capturing()) {
+        float const tau = 0.0075f * std::clamp(strength, 0.1f, 3.0f);          // the trail's time constant (s)
+        blendA = std::min(std::exp(-bc.avgDt / tau), 0.86f);
+        blurFrac = 0.0f;                                                       // not both
+    }   // [Main Menu] the camera jumps 90 degrees per face: no smear in the panorama   // 60% of the gap at strength 1, never more than 6 ms of motion
     float bT[3] = {float(now2.pos[0] - pa.pos[0]), float(now2.pos[1] - pa.pos[1]), float(now2.pos[2] - pa.pos[2])};
     if (bT[0] * bT[0] + bT[1] * bT[1] + bT[2] * bT[2] > 9.0f) { pa = now2; bT[0] = bT[1] = bT[2] = 0.0f; }   // a teleport / respawn, not a move
     if (look.blurTest) {   // bench / review: a steady pretend motion (as if 6 ms ago), so a still frame shows the blur and its cost
@@ -3027,7 +3038,9 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (!ap) atmosNeed = false;
     // [Match FX on any sky] no World FX sky, but a kill / impact frame / fireworks / shards are playing: the pass draws them alone
     bool const matchOnly = blurOnly && look.kills && gWsTexUp.load() && gWsHeap && matchFxLive();
-    if (blurOnly && !blurNeed && !atmosNeed && !matchOnly && gFadeStage.load() == 0) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
+    bool const blendNeed = blendA > 0.0f;
+    if (blendNeed) rf::postfx::noteWorldBlur();                                // the Present-time blur stays off
+    if (blurOnly && !blurNeed && !blendNeed && !atmosNeed && !matchOnly && gFadeStage.load() == 0) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
         if (gAtmosOn.load(std::memory_order_relaxed) && !ap) { wfxStatus("building the haze / mist pipeline (in the background)"); return false; }
         if (blurFrac > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
         panoGrab();
@@ -3540,6 +3553,51 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         calls.draw(list, 3, 1, 0, 0);
         }
     }
+    {   // ---- Smooth motion blur: blend the last frame's picture over this one, then keep this one for the next
+        static ComPtr<ID3D12Resource> histBuf;
+        static UINT64                 histSize = 0;
+        static UINT                   histW = 0, histH = 0, histPitch = 0;
+        static bool                   histInSrv = false, histValid = false;
+        static uint64_t               histFrame = ~0ull;
+        static float                  histF[3]{}; static double histP[3]{};
+        if (!blendNeed) histValid = false;
+        else if (histFrame != frameNo) {                                      // once per displayed frame
+            ID3D12PipelineState* fp = derived(dev.Get(), g, 22);
+            bool ok;
+            {
+                std::lock_guard l(gWfxMutex);
+                ID3D12Resource* const before = histBuf.Get();
+                ok = wfxBuffer(dev.Get(), histBuf, histSize, rTot);
+                if (histBuf.Get() != before) { histInSrv = false; histValid = false; }
+            }
+            float const dF = snap.forward[0] * histF[0] + snap.forward[1] * histF[1] + snap.forward[2] * histF[2];
+            double const dP = std::hypot(snap.pos[0] - histP[0], std::hypot(snap.pos[1] - histP[1], snap.pos[2] - histP[2]));
+            bool const cut = dF < 0.5f || dP > 4.0;                            // a teleport / respawn / snap: no trail across it
+            bool const sameSize = histW == UINT(rd.Width) && histH == rd.Height;
+            if (ok && fp && histValid && histInSrv && sameSize && !cut && frameNo - histFrame <= 2) {
+                float f[44]{};
+                f[12] = blendA; f[13] = blendA; f[15] = bgra ? 1.0f : 0.0f;   // the same share for sky and world
+                f[16] = float(rd.Width); f[17] = float(rd.Height); f[18] = float(histPitch); f[19] = float(df.Footprint.RowPitch);
+                f[20] = float(histW); f[21] = float(histH);
+                calls.setConsts(list, 0, 44, f, 0);
+                list->SetGraphicsRootShaderResourceView(1, histBuf->GetGPUVirtualAddress());
+                list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
+                calls.setPso(list, fp);
+                calls.draw(list, 3, 1, 0, 0);
+            }
+            if (ok) {   // keep what is on screen now (after the blend: the trail decays exponentially)
+                if (histInSrv) wfxBarrier(list, histBuf.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+                wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                dst.pResource = histBuf.Get(), dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
+                list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+                wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                wfxBarrier(list, histBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                histInSrv = true; histValid = true; histFrame = frameNo;
+                histW = UINT(rd.Width), histH = rd.Height, histPitch = fpC.Footprint.RowPitch;
+                for (int k = 0; k < 3; ++k) histF[k] = snap.forward[k], histP[k] = snap.pos[k];
+            }
+        }
+    }
     {   // ---- [Sky] crossfade: keep the frame before a switch, then let it dissolve into the new sky
         static ComPtr<ID3D12Resource> fadeBuf;
         static UINT64                 fadeSize = 0;
@@ -3642,6 +3700,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "waves") gLook.waves = std::clamp(v, 0.f, 2.f);
         else if (k == "trails") gLook.trails = std::clamp(v, 0.f, 1.f);
         else if (k == "blurmove") gLook.blurMove = std::clamp(v, 0.f, 1.5f);
+        else if (k == "blurstyle") gLook.blurStyle = std::clamp(int(v), 0, 1);
     }
 }
 // One switch for the whole look: the Renderer Foundation side (sky, void, light, rim: the glass strength) and Bedrock
@@ -3726,7 +3785,7 @@ void saveWorldFxSettings() {
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nglass " << gLook.glass << "\nbeds " << (gLook.beds ? 1 : 0)
         << "\nskyrate " << gLook.skyRate << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene << "\nkillsfx " << gLook.killSfx
-        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\nblurmove " << gLook.blurMove << "\n";
+        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\nblurmove " << gLook.blurMove << "\nblurstyle " << gLook.blurStyle << "\n";
 }
 
 void setWorldSky(int kind) {

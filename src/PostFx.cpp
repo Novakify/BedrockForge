@@ -112,7 +112,7 @@ struct Ui {
     bool  director = true;  // apply the LyricsForge Director's look
 } gUi;
 
-std::atomic<float>   gBlurWanted{0.0f}, gBlurMove{-1.0f};
+std::atomic<float>   gBlurWanted{0.0f}, gBlurMove{-1.0f}, gBlurStyle{-1.0f};
 std::atomic<int64_t> gWorldBlurAt{0};
 int64_t msNow() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
@@ -369,6 +369,7 @@ BfFxEventsV1 const* fxEvents() {
     return e && e->version >= 1 && e->size >= offsetof(BfFxEventsV1, px) ? e : nullptr;   // a v1 Bedrock Forge has no player fields
 }
 float motionBlurMove() { return gBlurMove.load(std::memory_order_relaxed); }
+float motionBlurStyle() { return gBlurStyle.load(std::memory_order_relaxed); }
 float motionBlurWanted() { return gBlurWanted.load(std::memory_order_relaxed); }
 void  noteWorldBlur() { gWorldBlurAt.store(msNow(), std::memory_order_relaxed); }
 bool showcasePose(float& blend, float& yaw, float& pitch, float& radius) {
@@ -406,6 +407,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     gLinked = bf && bf->version >= 1;
     if (gLinked) gLast = *bf;
     gBlurMove.store(gLinked && !gUi.custom && bf->active && bf->reserved[0] >= 1.0f ? bf->reserved[0] - 1.0f : -1.0f, std::memory_order_relaxed);
+    gBlurStyle.store(gLinked && !gUi.custom && bf->active && bf->reserved[1] >= 1.0f ? bf->reserved[1] - 1.0f : -1.0f, std::memory_order_relaxed);   // 0 Smooth, 1 Streak (-1: not said)
     gBlurWanted.store(!gUi.enabled ? 0.0f : gUi.custom ? gUi.motionBlur : (gLinked && bf->active ? bf->motionBlur : 0.0f), std::memory_order_relaxed);
     if (!gLinked) { gStatus = "waiting for Bedrock Forge"; gHavePrev = false; return false; }
     Dir const dir = readDirector(gUi.director);
