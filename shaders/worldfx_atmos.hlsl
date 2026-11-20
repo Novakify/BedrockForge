@@ -2165,14 +2165,20 @@ float3 cuteEyes(float3 o, float3 P) {
         int   react = int(floor(code / 100.0 + 0.01)), face = int(fmod(code, 100.0) + 0.5) % 22;
         float realH = fmod(aDim[i].w, 1000.0);
         bool  player = aDim[i].w >= 999.0;
-        float hs = player ? 0.25 : clamp(realH * 0.16, 0.16, 0.30);
-        float3 hc = aPos[i].xyz + float3(0, 0.1 + realH + (player ? 0.075 : 0.0) - hs, 0);   // (a player model stands 1.875, its box 1.8)
-        float3 lp = P - hc;
-        if (dot(lp, lp) > 0.6) continue;
+        // (in game: the head is not where the box says - a villager's / zombie's sticks up out of its box, a pig's
+        //  is out in front of its body) - players and humanoid mobs: the head sits at the top; four-legged mobs: in
+        //  front, at the top of the box
+        bool  humanoid = player || (realH > 1.55 && realH < 2.3);
+        float hs = humanoid ? 0.25 : clamp(realH * 0.28, 0.16, 0.28);
+        float top = 0.1 + realH;
         float yaw = aDim[i].y;
         float3 fwd = float3(-sin(yaw), 0, cos(yaw)), side = float3(cos(yaw), 0, sin(yaw));
+        float3 hc = aPos[i].xyz + float3(0, top - (player ? 0.05 : humanoid ? 0.12 : hs), 0) + (humanoid ? 0.0 : max(aPos[i].w - 0.2, 0.2)) * fwd;
+        float3 lp = P - hc;
+        if (dot(lp, lp) > 0.6) continue;
         float z = dot(lp, fwd), x = dot(lp, side) / hs, y = lp.y / hs;
-        if (z < hs * 0.80 || z > hs * 1.25 || abs(x) > 1.0 || abs(y) > 1.0) continue;   // only the front face
+        float zLo = humanoid ? 0.8 : 0.3, zHi = humanoid ? 1.3 : 2.2;
+        if (z < hs * zLo || z > hs * zHi || abs(x) > 1.0 || abs(y) > 1.0) continue;   // only the front face
         if (fresh > 0.5) { float2 j = float2(sin(c2.w * 60.0), cos(c2.w * 47.0)) * 0.03; x += j.x; y += j.y; }   // a shake right after a hit   // a little shake
         // (quality pass, Fernando: "pixelated, low res") 4x rotated-grid supersampling of the face, edges softened by
         // the real pixel size: smooth up close and far away
