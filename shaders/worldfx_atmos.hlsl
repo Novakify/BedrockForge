@@ -1175,6 +1175,7 @@ float3 radiance(int2 p, float3 P, float zc) {
         float3 off = rdv * tc - cc;
         float  pxPerBlock = c4.y / max(tc, 0.5) * 0.9;                    // rough screen size of a block there
         float  reach = 18.0 * sc / pxPerBlock;                            // the glow's reach, in blocks
+        if (pxPerBlock * Hh < 10.0) continue;                                // (perf audit 2: specks too small to outline)
         if (abs(off.y) > Hh * 0.5 + 0.4 + reach || length(off.xz) > 0.55 + reach) continue;
         // (round 5, Fernando: "half-ass version of theirs, plain and dull, not glowy". Their clip, close up: a thick
         //  near-white line hugging the outside of the silhouette, then a lilac glow fading out ~20 px - and the body
