@@ -636,7 +636,13 @@ float3 ascension(float3 P, float3 rd, float dist, bool sky, float t, bool fp) {
     }
     if (fp) return L;   // from your own eyes: only its light on the ground (the shell would fill the screen)
     // the closest approach of the view ray to your axis (feet - 0.1 .. 3.3 above them)
-    float3 A = pl.xyz + float3(0, -0.1, 0), v = float3(0, 3.4, 0);
+    // (Fernando 2026-11-20, Hive: "the energy cuts off when trying to go beyond that box - make the radius bigger"
+    //  + a big dim gold wedge over the sky looking up at it.) The traced column now grows with the size (the crown at
+    //  size 2 reached 3.75 blocks and was cut at 3.5), its width covers the longest tongues, and a view ray running
+    //  nearly along the column (looking steeply up / down at it: the camera-facing plane degenerates and smeared the
+    //  flame over the whole sky) fades it out instead.
+    float  colH = 3.0 + 1.4 * S;
+    float3 A = pl.xyz + float3(0, -0.1, 0), v = float3(0, colH, 0);
     float  b = dot(rd, v), c = dot(v, v), d = dot(rd, -A), e = dot(v, -A);
     float  den = c - b * b;
     if (den < 1e-5) return L;
@@ -650,12 +656,15 @@ float3 ascension(float3 P, float3 rd, float dist, bool sky, float t, bool fp) {
     float3 right = cross(float3(0, 1, 0), rd);
     right = dot(right, right) > 1e-4 ? normalize(right) : float3(1, 0, 0);
     float  x  = dot(Pr - Q, right);                    // across (signed), in blocks
-    float  y  = hu * 3.4 - 0.1;                        // height above your feet (the crown fades out past the top)
+    float  y  = hu * colH - 0.1;                       // height above your feet (the crown fades out past the top)
     float  ax = abs(x);
-    if (ax > 1.6 * S + 0.4 || sc < 0.2) return L;      // nowhere near: done
+    float  bodyW = 0.30 + 0.26 * S;
+    if (ax > 3.2 * bodyW + 0.9 || sc < 0.2) return L;  // nowhere near: done
+    float  steep = smoothstep(0.80, 0.55, abs(rd.y));   // along the column: no flat smear
+    if (steep <= 0.0) return L;
     // depth: a wall in front hides it; your own body in front lets the front sheet of flame show (fainter)
     if (dist < sc - 1.2) return L;
-    float front = dist < sc - 0.25 ? 0.45 : 1.0;
+    float front = (dist < sc - 0.25 ? 0.45 : 1.0) * steep;
     // ---- the flame shell (tuned on an offline preview, 6 passes: no hairline rims, no hard bands, no box at the crown).
     //      f = how far inside the flame (in body widths, > 0 inside): the body's outline grown out, a dome tapering to
     //      a crown, its edge torn into tongues that stream upward (mirrored left / right: no seam down the middle)
