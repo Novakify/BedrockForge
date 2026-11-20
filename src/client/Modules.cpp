@@ -446,6 +446,7 @@ void atmosTick() {
             int const pi = std::clamp(int(cu->num("palette", 0)), 0, 2);
             out += std::format("cu 1\ncu_c {:.3f} {:.3f} {:.3f}\ncu_soft {:.2f}\ncu_hearts {:.2f}\ncu_sparkle {:.2f}\ncu_pastel {:.2f}\n", kCu[pi][0], kCu[pi][1], kCu[pi][2],
                                cu->num("softness", 0.7f), cu->num("hearts", 1.f), cu->num("sparkles", 1.f), cu->num("pastel", 1.f));
+            out += std::format("cu_eyes {}\n", cu->flag("eyes", true) ? 1 : 0);
         } else out += "cu 0\n";
         if (auto* bo = r.find("block_outline"); bo && bo->enabled) { auto c = pal(bo, 0); out += std::format("bo 1\nbo_c {:.3f} {:.3f} {:.3f}\nbo_style {}\nbo_w {:.2f}\nbo_glow {:.2f}\nbo_fill {:.2f}\nbo_face {}\nbo_glide {}\n", c[0], c[1], c[2], int(bo->num("style", 0)), bo->num("width", 2.f), bo->num("glow", 0.6f), bo->num("fill", 0.12f), bo->flag("face", true) ? 1 : 0, bo->flag("glide", true) ? 1 : 0); }
         else out += "bo 0\n";
@@ -1487,7 +1488,8 @@ void registerBuiltins() {
             .slider("interval", "Scan every (s)", 6.f, 2.f, 20.f, 1.f).toggleSetting("sky", "Data sky", true);
         r.add("cute_world", "Cute World", Category::Visual, "A soft pastel world with drifting hearts and little sparkles (Renderer Foundation)", false)
             .choice("palette", "Hearts", {"Rose", "Lilac", "Peach"}, 0).slider("pastel", "Pastel", 1.f, 0.f, 1.f, 0.05f)
-            .slider("softness", "Softness", 0.7f, 0.f, 1.f, 0.05f).slider("hearts", "Hearts", 1.f, 0.f, 1.5f, 0.05f).slider("sparkles", "Sparkles", 1.f, 0.f, 1.f, 0.05f);
+            .slider("softness", "Softness", 0.7f, 0.f, 1.f, 0.05f).slider("hearts", "Hearts", 1.f, 0.f, 1.5f, 0.05f).slider("sparkles", "Sparkles", 1.f, 0.f, 1.f, 0.05f)
+            .toggleSetting("eyes", "Anime eyes on players and mobs", true);
         auto& bom = r.add("block_outline", "Block Outline", Category::Visual, "A cleaner, glowing outline on the block you aim at (Renderer Foundation)", false);
         bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .slider("width", "Width (px)", 2.f, 1.f, 5.f, 0.5f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.12f, 0.f, 0.6f, 0.02f)
@@ -1900,7 +1902,7 @@ void installRuntime() {
                 gFxEv.bAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             } catch (...) {}
         }
-        if (player && Registry::get().on("motion_blur")) { try { matchfx::blurActorsFrame(*player); } catch (...) {} }
+        if (player && (Registry::get().on("motion_blur") || Registry::get().on("cute_world"))) { try { matchfx::blurActorsFrame(*player, Registry::get().on("cute_world")); } catch (...) {} }
         if (player) { // [BF] hitch log: health drops = you took a hit (servers send health to the client)
             static int lastHp = -1;
             int const hp = player->getHealth();

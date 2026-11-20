@@ -795,7 +795,7 @@ uint32_t         gBlurActorsFrame = 0;
 } // namespace
 extern "C" __declspec(dllexport) BfBlurActorsV1 const* BF_GetBlurActors() { return &gBlurActors[gBlurActorsCur.load(std::memory_order_acquire)]; }
 namespace bedrock_forge::client::matchfx {
-void blurActorsFrame(LocalPlayer& lp) {
+void blurActorsFrame(LocalPlayer& lp, bool cuteOn) {
     int const w = gBlurActorsCur.load(std::memory_order_relaxed) ^ 1;
     BfBlurActorsV1& o = gBlurActors[w];
     o.count = 0; o.size = sizeof o; o.version = 1; o.frame = ++gBlurActorsFrame;
@@ -808,7 +808,7 @@ void blurActorsFrame(LocalPlayer& lp) {
                 if (player != (pass == 0)) continue;
                 float dx = 0, dy = 0, dz = 0;
                 try { auto const d = a->getPosDelta(); dx = d.x; dy = d.y; dz = d.z; } catch (...) {}
-                if (!player && dx * dx + dy * dy + dz * dz < 0.004f * 0.004f) continue;   // it stands still: part of the world, it blurs with it
+                if (!player && !cuteOn && dx * dx + dy * dy + dz * dz < 0.004f * 0.004f) continue;   // it stands still: part of the world, it blurs with it
                 auto const& bb = a->getAABB();
                 float const cx = (bb.min.x + bb.max.x) * 0.5f, cz = (bb.min.z + bb.max.z) * 0.5f;
                 if ((cx - me.x) * (cx - me.x) + (cz - me.z) * (cz - me.z) > 64.0f * 64.0f) continue;
@@ -818,6 +818,9 @@ void blurActorsFrame(LocalPlayer& lp) {
                 e.x = cx; e.z = cz; e.y = bb.min.y - 0.1f - lagV;
                 e.r = std::max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) * 0.5f + (player ? 0.45f : 0.2f) + lagH;
                 e.h = (bb.max.y - bb.min.y) + 0.45f + 2.0f * lagV;
+                // [Cute World] where its face points (head yaw, radians) and its real box, so RF can paint anime eyes on it
+                try { e.pad[0] = a->getRotation().y * 3.14159265f / 180.0f; e.pad[1] = 1.0f; } catch (...) { e.pad[1] = 0.0f; }
+                e.pad[2] = (bb.max.y - bb.min.y) + (player ? 1000.0f : 0.0f);   // real height (+1000: a player)
             }
     } catch (...) { o.count = 0; }
     gBlurActorsCur.store(w, std::memory_order_release);
