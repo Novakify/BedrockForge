@@ -89,7 +89,8 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 cu0;      // Cute World: rgb blush / heart colour (linear), w = softness (-1 = off)
     float4 cu1;      // x = hearts amount, y = sparkles, z = pastel strength, w = 1: on
     float4 ink[24];  // Gold Ink puddles: xyz the hit (camera-relative), w = age + seed * 100000 (seed 0..999)
-    float4 inkInfo;  // x = how many, y = how long they stay (s)
+    float4 inkInfo;  // x = how many, y = how long they stay (s), z = colour mode (0 single, 1 gradient, 2 neon mix, 3 dark)
+    float4 inkD[24]; // xy = the way each puddle was thrown (xz, from you to the one hit)
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -248,48 +249,106 @@ float3 inkPuddles(float3 P, float upN, float t) {
     if (n <= 0 || fx1.z <= 0.0 || upN < 0.6) return 0;
     float3 L = 0;
     float life = max(inkInfo.y, 1.0);
+    float topAge = 1e9, topA = 0.0; float3 topC = 0, haloL = 0;
     [loop] for (int i = 0; i < n; ++i) {
         float age = frac(ink[i].w / 100.0) * 100.0, seed = floor(ink[i].w / 100.0) / 1000.0;
         float3 c = ink[i].xyz;
         float3 dv = P - c;
         if (dv.y > 0.3 || dv.y < -2.6) continue;
-        float Sz = fx1.z * (0.75 + 0.5 * frac(seed * 3.7));
-        float sa = seed * 37.0;
-        float2 off = float2(cos(seed * 91.0), sin(seed * 91.0)) * (0.25 + 0.6 * frac(seed * 13.0)) * fx1.z;   // spread
-        float2 q = dv.xz - off;
-        if (dot(q, q) > 9.0 * Sz * Sz) continue;
-        float2 ax2 = float2(cos(sa), sin(sa));
-        float dm = 9.0;
-        [unroll] for (int bI = 0; bI < 3; ++bI) {
-            float fb = float(bI);
-            float2 pc = ax2 * (fb - 1.0) * 0.55 * Sz + float2(-ax2.y, ax2.x) * 0.16 * Sz * sin(seed * 9.0 + fb * 2.3);
-            float  rr = (0.40 - 0.06 * abs(fb - 1.0)) * Sz * (0.8 + 0.4 * frac(seed * 5.1 + fb * 0.37));
-            float  db = length(q - pc) - rr;
-            float  hh = saturate(0.5 + 0.5 * (dm - db) / 0.12);
-            dm = lerp(dm, db, hh) - 0.12 * hh * (1.0 - hh);
-        }
+        // (round 5, from Fernando's own clips of the Purxiy Hit Splash, frame by frame: a STARBURST under the one hit -
+        //  a white-hot core fading into the colour, 9-13 long tapering fingers each ending in a round bulb, splats flung
+        //  2-4 blocks out mostly one way, specks, and a soft glow over the whole patch. Every hit lays another; they stay.)
+        float Sz = fx1.z * (0.9 + 0.35 * frac(seed * 3.7));
+        float2 dirT = normalize(inkD[i].xy + float2(1e-4, 0));
+        float2 sideT = float2(-dirT.y, dirT.x);
+        float2 q = dv.xz - (float2(frac(seed * 31.0), frac(seed * 57.0)) - 0.5) * 0.5 * fx1.z;   // a little off each time
+        float rq = length(q);
+        if (rq > 4.5 * Sz) continue;
         float an = atan2(q.y, q.x);
-        dm += 0.035 * Sz * (sin(an * 13.0 + seed * 20.0) + 0.6 * sin(an * 29.0 + seed * 7.0));
-        float blob = 1.0 - smoothstep(-0.01, 0.015, dm);
-        float drops = 0.0;
-        [unroll] for (int d = 0; d < 9; ++d) {
-            float a2 = seed * 17.0 + float(d) * 2.4, dr = Sz * (0.95 + 1.0 * frac(seed * 7.3 + float(d) * 0.37));
-            float rs = Sz * (0.045 + 0.05 * frac(seed * 3.1 + float(d) * 0.71));
-            drops = max(drops, 1.0 - smoothstep(rs * 0.8, rs, length(q - float2(cos(a2), sin(a2)) * dr)));
+        // (round 6, Fernando: "too star-like, the same pattern reused". Every splatter is its own now: a lumpy core of
+        //  2-3 merged blobs, 5-14 fingers at random angles - some clumped, some stubby, some long - each wobbling, some
+        //  forking, ending in a drop; flung splats are elongated irregular drops, not stars.)
+        float  H0 = hash12b(float2(seed * 977.0, 3.1));
+        float dm = 9.0;
+        [unroll] for (int ck = 0; ck < 3; ++ck) {
+            float h1 = hash12b(float2(seed * 977.0, 10.0 + float(ck))), h2 = hash12b(float2(seed * 977.0, 20.0 + float(ck)));
+            float2 cc = (float2(h1, h2) - 0.5) * 0.55 * Sz * step(0.5, float(ck));
+            float  rcc = Sz * (0.32 + 0.22 * hash12b(float2(seed * 977.0, 30.0 + float(ck)))) * (ck == 0 ? 1.0 : 0.75);
+            float  aq = atan2(q.y - cc.y, q.x - cc.x);
+            float  dc = length(q - cc) - rcc * (1.0 + 0.10 * sin(aq * 3.0 + h1 * 30.0) + 0.06 * sin(aq * 7.0 + h2 * 20.0));
+            float  hh = saturate(0.5 + 0.5 * (dm - dc) / 0.12);
+            dm = lerp(dm, dc, hh) - 0.12 * hh * (1.0 - hh);
         }
-        float ink = max(blob, drops);
-        float inner = saturate(-dm / (0.16 * Sz));
-        float3 col = inkNeon(seed);
-        float3 hot = lerp(col, float3(1.0, 1.0, 1.0), 0.55);
-        float  fade = smoothstep(life, life * 0.8, age);
-        float  pop  = 1.0 + 1.2 * exp(-age * 6.0);
-        float  pulse = 0.9 + 0.1 * sin(t * 2.2 + seed * 40.0);
-        float  rim = exp(-pow(dm / (0.05 * Sz), 2.0));                 // the neon edge
-        float  halo = exp(-max(dm, 0.0) / (0.22 * Sz)) * (1.0 - ink);   // its light on the ground round it
-        float  gloss = exp(-pow((dot(q, float2(0.86, 0.5)) - 0.12 * Sz) / (0.09 * Sz), 2.0)) * inner;
-        float3 o = col * ink * (0.6 + 0.6 * inner) * (0.7 + 0.6 * fx2.w) + hot * (rim * 0.9 + gloss * 0.5) * blob + col * halo * 0.45 * (0.6 + 0.6 * fx2.w);
-        L = max(L, o * pop * pulse * fade * smoothstep(0.0, 1.1, 2.6 + dv.y));   // stacked puddles keep their colours (no white-out)
+        int   nF = 5 + int(H0 * 10.0);
+        float fing = 9.0, tipD = 9.0;
+        [loop] for (int fk = 0; fk < nF; ++fk) {
+            float ff = float(fk);
+            float ha = hash12b(float2(seed * 977.0, 40.0 + ff)), hl = hash12b(float2(seed * 977.0, 60.0 + ff)), hw = hash12b(float2(seed * 977.0, 80.0 + ff));
+            float fa = ha * 6.2831853;                                         // anywhere round - clumps and gaps
+            float2 fd = float2(cos(fa), sin(fa));
+            float Lf = Sz * (0.45 + 2.4 * hl * hl) * (0.75 + 0.5 * saturate(dot(fd, dirT) + 0.6));
+            float hh = saturate(dot(q, fd) / Lf);
+            float w = Sz * (0.09 + 0.18 * hw) * pow(1.0 - hh, 0.7 + 0.8 * hl) + Sz * 0.025;
+            float bend = Sz * (0.25 * (hw - 0.5)) * hh * hh + Sz * 0.04 * sin(hh * 9.0 + ha * 40.0) * hh;
+            float2 nrm2 = float2(-fd.y, fd.x);
+            float2 cl = fd * hh * Lf + nrm2 * bend;
+            fing = min(fing, length(q - cl) - w);
+            float2 tip = fd * Lf + nrm2 * Sz * (0.25 * (hw - 0.5) + 0.04 * sin(9.0 + ha * 40.0));
+            tipD = min(tipD, length(q - tip) - Sz * (0.04 + 0.08 * hw) * step(0.3, hl));
+            if (hw > 0.6) {                                                   // a fork off this finger
+                float2 fd2 = normalize(fd + nrm2 * (hw - 0.8) * 2.5);
+                float2 o2 = fd * Lf * 0.45 + nrm2 * bend * 0.45;
+                float  L2 = Lf * 0.45;
+                float  h3 = saturate(dot(q - o2, fd2) / L2);
+                fing = min(fing, length(q - o2 - fd2 * h3 * L2) - Sz * 0.05 * (1.0 - h3) - Sz * 0.012);
+            }
+        }
+        float hhm = saturate(0.5 + 0.5 * (dm - fing) / 0.08);
+        dm = lerp(dm, fing, hhm) - 0.08 * hhm * (1.0 - hhm);
+        dm = min(dm, tipD);
+        // splats flung out (mostly along the hit): elongated irregular drops
+        float spl = 9.0;
+        int nS = 3 + int(hash12b(float2(seed * 977.0, 5.0)) * 6.0);
+        [loop] for (int sk = 0; sk < nS; ++sk) {
+            float h1 = hash12b(float2(seed * 977.0, 100.0 + float(sk))), h2 = hash12b(float2(seed * 977.0, 120.0 + float(sk))), h3 = hash12b(float2(seed * 977.0, 140.0 + float(sk)));
+            float sa = (h1 - 0.5) * 3.0;
+            float2 sdir = dirT * cos(sa) + sideT * sin(sa);
+            float2 sp = sdir * Sz * (1.5 + 2.4 * h2);
+            float2 sq = q - sp;
+            float2 sl = float2(dot(sq, sdir), dot(sq, float2(-sdir.y, sdir.x)));
+            float  sr = Sz * (0.07 + 0.13 * h3);
+            float  wob = 1.0 + 0.18 * sin(atan2(sl.y, sl.x) * 3.0 + h2 * 20.0) + 0.1 * sin(atan2(sl.y, sl.x) * 5.0 + h3 * 30.0);
+            spl = min(spl, length(sl * float2(0.45 + 0.35 * h3, 1.0)) - sr * wob);   // stretched along its flight
+        }
+        float specks = 0.0;
+        [unroll] for (int d = 0; d < 12; ++d) {
+            float h1 = hash12b(float2(seed * 977.0, 200.0 + float(d))), h2 = hash12b(float2(seed * 977.0, 220.0 + float(d)));
+            float2 dp = float2(cos(h1 * 6.2831853), sin(h1 * 6.2831853)) * Sz * (1.2 + 2.4 * h2);
+            specks = max(specks, 1.0 - smoothstep(0.035 * Sz, 0.05 * Sz, length(q - dp)));
+        }
+        float blob  = 1.0 - smoothstep(-0.01, 0.015, dm);
+        float splat = 1.0 - smoothstep(-0.01, 0.015, spl);
+        float ink   = max(max(blob, splat), specks);
+        float inner = max(saturate(1.0 - rq / (0.75 * Sz)), saturate(-spl / (0.06 * Sz)) * splat);   // white-hot at the core and the splats' hearts
+        float halo  = exp(-max(min(dm, spl), 0.0) / (0.30 * Sz)) * (1.0 - ink) + 0.10 * exp(-rq / (1.0 * Sz));
+        float rim   = exp(-pow(min(dm, spl) / (0.035 * Sz), 2.0));
+        float gloss = 0.0;
+        // colour mode
+        int   mode = int(inkInfo.z + 0.5);
+        float3 col = mode == 0 ? fx2.rgb : mode == 1 ? lerp(fx2.rgb, fx3.rgb, saturate(rq / (2.5 * Sz) + 0.3 * sin(seed * 20.0))) : mode == 2 ? inkNeon(seed) : fx2.rgb;
+        float3 hot = lerp(col, float3(1.0, 1.0, 1.0), 0.75);
+        float  fade = smoothstep(life, life * 0.75, age);
+        float  pop  = 1.0 + 1.0 * exp(-age * 5.0);
+        float  pulse = 0.92 + 0.08 * sin(t * 2.0 + seed * 40.0);
+        float  crk = 0.0;
+        float3 body = mode == 3 ? col * 0.10 + hot * inner * 0.35 : lerp(col, hot, pow(inner, 1.5)) * (0.8 + 0.5 * inner);
+        float3 oInk = body * (0.8 + 0.5 * fx2.w) + (mode == 3 ? col * 1.6 : hot * 0.6) * rim * ink;
+        float3 oHalo = col * halo * (0.55 + 0.6 * fx2.w);
+        float  k = pop * pulse * fade * smoothstep(0.0, 1.1, 2.6 + dv.y);
+        if (ink > 0.02 && age < topAge) { topAge = age; topC = oInk * k; topA = ink; }   // the newest lies on top
+        haloL += oHalo * k * 0.4;                                                        // the glows add up as they stack
     }
+    L = lerp(min(haloL, 1.2), topC, topA);
     return L;
 }
 // the ripple's neon outline: where the body's edge meets what is behind it (a depth jump), near a fresh hit
@@ -344,18 +403,26 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
             // (in game 2026-11-19: the ink was painted on everything standing in its column - the player you hit, walls,
             //  fences - and read as a bug. It lies on floors only now: surfaces that face up.)
             // (the ink on the ground is its own list now: inkPuddles(), drawn for as long as a puddle stays)
-            if (fx1.z > 0.0 && age < 0.6) {                                   // gold flakes flying out of the blow
+            if (fx1.z > 0.0 && age < 0.45) {   // (Purxiy clip: bright liquid streaks shoot from the blow down to the ground, where the starburst lands)
                 float dist0 = length(P);
-                [unroll] for (int k = 0; k < 14; ++k) {
+                int   mode = int(inkInfo.z + 0.5);
+                float3 sc = mode == 2 ? inkNeon(seed) : fx2.rgb;
+                [unroll] for (int k = 0; k < 8; ++k) {
                     float fk = float(k), h1 = frac(seed * 13.7 + fk * 0.618), h2 = frac(seed * 7.1 + fk * 0.371);
-                    float a = h1 * 6.2831853, v = 2.5 + 3.0 * h2;
-                    float3 v0 = float3(cos(a) * v, 2.0 + 3.0 * frac(h1 * 9.3), sin(a) * v);
-                    float3 fp = c + v0 * age - float3(0, 9.0 * age * age, 0);
-                    float tz = dot(fp, rd);
+                    float a = h1 * 6.2831853;
+                    float3 land = c + float3(cos(a) * (0.6 + 1.2 * h2), -1.25, sin(a) * (0.6 + 1.2 * h2)) * float3(fx1.z, 1.0, fx1.z);
+                    float u = saturate(age / (0.18 + 0.08 * h2));
+                    float3 hd = lerp(c, land, u * u);                               // falls, faster as it goes
+                    float3 ab = (c - land) * 0.35 * (1.0 - u * 0.6);
+                    float d1 = dot(rd, ab), d2 = dot(ab, ab), e1 = dot(rd, hd), e2 = dot(ab, hd);
+                    float den = d2 - d1 * d1;
+                    float uu = den > 1e-6 ? saturate((d1 * e1 - e2) / den) : 0.0;
+                    float3 cp = hd + ab * uu;
+                    float tz = dot(cp, rd);
                     if (tz < 0.2 || tz > dist0 + 0.05) continue;
-                    float dd = length(rd * tz - fp), sz = 0.03 * fx1.z;
-                    float tw = 0.6 + 0.4 * sin(age * 50.0 + fk * 3.0);
-                    L += lerp(fx2.rgb, float3(1.0, 0.95, 0.8), 0.4) * (exp(-pow(dd / sz, 2.0)) * 1.8 + exp(-dd / (sz * 3.0)) * 0.3) * tw * (1.0 - age / 0.6);
+                    float dd = length(rd * tz - cp);
+                    float fadeS = 1.0 - smoothstep(0.25, 0.45, age);
+                    L += lerp(sc, float3(1.0, 1.0, 1.0), 0.6 * (1.0 - uu)) * (exp(-pow(dd / 0.018, 2.0)) * 2.0 + exp(-dd / 0.06) * 0.3) * (1.0 - uu) * fadeS;
                 }
             }
             // on the one you hit (Fernando 2026-11-19: "hit the player too, just look better"): no ink smeared on them -
@@ -429,11 +496,54 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                     float nA = sin(dv.y * 23.0 + sin(dot(dv.xz, float2(17.0, 11.0)) + age * 40.0) * 2.0 + seed * 30.0);
                     float arcs = exp(-pow(nA / 0.06, 2.0)) * exp(-r3 * 2.5) * (1.0 - smoothstep(0.0, 0.3, age)) * step(0.5, frac(age * 24.0 + seed));
                     float wash = (1.0 - smoothstep(0.08, 0.45, age)) * smoothstep(0.0, 0.05, age) * 0.18;
-                    Lr += (cW * (front * 1.6 + arcs * 1.4) + cA * (front * 1.4 + lattice * 1.5 + arcs * 0.8 + wash)) * fadeB;
+                    // (round 4, Fernando: "more dynamic, unique and dramatic on the body") a later echo wave; the front splits
+                    // into colour fringes like light through a prism; branching lightning veins race out behind the front
+                    float Re = 1.7 * (1.0 - pow(1.0 - saturate((age - 0.12) / 0.3), 2.2));
+                    float echo = exp(-pow((r3 - Re) / 0.035, 2.0)) * step(0.12, age) * 0.8;
+                    float3 prism = float3(exp(-pow((r3 - Rf - 0.05) / 0.03, 2.0)), 0.0, exp(-pow((r3 - Rf + 0.05) / 0.03, 2.0)));
+                    float2 vq = float2(dot(dv, rgt), dot(dv, upv));
+                    float va = atan2(vq.y, vq.x), vr = length(vq);
+                    float vein = 0.0;
+                    [unroll] for (int vk = 0; vk < 5; ++vk) {
+                        float base = seed * 20.0 + float(vk) * 1.2566;
+                        float wig = 0.35 * sin(vr * 14.0 + float(vk) * 3.0 + seed * 9.0) + 0.15 * sin(vr * 37.0 + float(vk));
+                        float da = atan2(sin(va - base - wig * vr), cos(va - base - wig * vr));
+                        vein += exp(-pow(da * vr / 0.012, 2.0)) * step(vr, Rf);
+                        float da2 = atan2(sin(va - base - 0.5 - wig * vr * 1.3), cos(va - base - 0.5 - wig * vr * 1.3));
+                        vein += 0.6 * exp(-pow(da2 * vr / 0.009, 2.0)) * step(0.15, vr) * step(vr, Rf * 0.8);
+                    }
+                    vein *= (1.0 - smoothstep(0.05, 0.35, age)) * (0.7 + 0.3 * step(0.5, frac(age * 30.0 + seed)));
+                    Lr += (cW * (front * 1.6 + arcs * 1.4 + vein * 1.4) + cA * (front * 1.4 + lattice * 1.5 + arcs * 0.8 + wash + echo + vein * 1.2)
+                           + prism * float3(1.0, 0.3, 1.0) * 1.2) * fadeB;
                 }
-                if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4 && upN > 0.6 && u < 1.0) {   // a ring rolling over the ground
-                    float r = length(dv.xz), R2 = 2.4 * (1.0 - pow(1.0 - u, 2.5));
-                    Lr += (cA * exp(-pow((r - R2) / 0.08, 2.0)) + cW * 0.8 * exp(-pow((r - R2) / 0.025, 2.0))) * pow(1.0 - u, 1.5);
+                // sparks bursting off the body - kept within about a block
+                if (age < 0.4) {
+                    float dist0b = length(P);
+                    float3 rg2 = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), up2 = cross(rg2, rd);
+                    [unroll] for (int k = 0; k < 10; ++k) {
+                        float fk = float(k), h1 = frac(seed * 9.1 + fk * 0.618), h2 = frac(seed * 4.7 + fk * 0.37);
+                        float a = h1 * 6.2831853;
+                        float3 dirS = normalize(rg2 * cos(a) + up2 * sin(a) + away * 0.6);
+                        float sp = 2.6 + 2.0 * h2;
+                        float3 hd = c + dirS * sp * age * (1.0 - age * 1.2);
+                        float3 ab = -dirS * 0.18;
+                        float d1 = dot(rd, ab), d2 = dot(ab, ab), e1 = dot(rd, hd), e2 = dot(ab, hd);
+                        float den = d2 - d1 * d1;
+                        float uu = den > 1e-6 ? saturate((d1 * e1 - e2) / den) : 0.0;
+                        float3 cp = hd + ab * uu;
+                        float tz = dot(cp, rd);
+                        if (tz < 0.2 || tz > dist0b + 0.05) continue;
+                        float dd = length(rd * tz - cp);
+                        Lr += lerp(cA, cW, 0.6 - 0.5 * uu) * exp(-pow(dd / 0.012, 2.0)) * (1.0 - uu) * 2.0 * (1.0 - age / 0.4);
+                    }
+                }
+                if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4 && upN > 0.6 && age < 0.35) {   // a small, tight impact at the feet (round 4: the big floor rings distracted in PvP)
+                    float uf = age / 0.35;
+                    float r = length(dv.xz), R2 = 0.85 * (1.0 - pow(1.0 - uf, 3.0));
+                    float an2 = atan2(dv.z, dv.x);
+                    float rays = pow(saturate(cos(an2 * 9.0 + seed * 30.0)), 10.0) * smoothstep(R2 + 0.25, R2, r) * smoothstep(0.1, R2, r);
+                    Lr += (cA * exp(-pow((r - R2) / 0.035, 2.0)) * 1.2 + cW * exp(-pow((r - R2) / 0.012, 2.0)) + cA * rays * 0.8
+                           + cA * exp(-r * r / 0.05) * 0.6 * (1.0 - uf)) * pow(1.0 - uf, 1.4);
                 }
                 if (kind == 3 && fx5.y > 0.5) Lr *= 1.5;
                 L += Lr * fx3.w * 1.2;

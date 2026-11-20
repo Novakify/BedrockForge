@@ -95,7 +95,7 @@ std::atomic<bool> gBlurOnly{false};
 // [Purxiy] Gold Ink puddles (Fernando 2026-11-19: "every hit adds a puddle that stays a while, different colours,
 // stacking where you keep hitting - a trail of ink after a fight"). RF keeps its own list of puddles (the event ring
 // is shared with jumps and swings and forgets them in a second or two): one per hit, up to 24, each with its seed.
-struct InkPuddle { double x = 0, y = 0, z = 0; int64_t at = 0; float seed = 0; };
+struct InkPuddle { double x = 0, y = 0, z = 0; int64_t at = 0; float seed = 0, dx = 1, dz = 0; };
 static InkPuddle gInk[24]; static int gInkNext = 0; static int64_t gInkSeen[48]{}; static int gInkSeenN = 0;
 static bool inkAlive(int64_t nowMs, float life) { for (auto const& p : gInk) if (p.at > 0 && float(nowMs - p.at) < life * 1000.f) return true; return false; }  // no World FX sky, but motion blur is asked for: the pass runs for the blur alone (any sky: vanilla, LyricsForge)
 
@@ -111,7 +111,7 @@ struct AtmosSet {
     // hit / jump effects (events from Bedrock Forge)
     bool  jc = false, hs = false, rp = false, sw = false, rpRing = true, rpCrits = true;
     float jcC[3]{0.78f, 0.42f, 1.0f}, jcSize = 1.2f, jcDur = 1.1f, jcGlow = 0.6f;
-    float hsA[3]{0.78f, 0.42f, 1.0f}, hsB[3]{0.95f, 0.92f, 1.0f}, hsSize = 1.0f, hsDur = 6.0f, hsGlow = 0.7f;
+    float hsA[3]{0.78f, 0.42f, 1.0f}, hsB[3]{0.95f, 0.92f, 1.0f}, hsSize = 1.0f, hsDur = 8.0f, hsGlow = 0.8f; float hsMode = 1.f;
     float rpC[3]{0.78f, 0.42f, 1.0f}, rpGlow = 0.8f, rpDur = 0.8f;
     float swC[3]{0.78f, 0.42f, 1.0f}, swSize = 1.0f, swGlow = 0.7f;
     bool  events() const { return jc || hs || rp || sw || pa; }
@@ -206,7 +206,7 @@ void pollAtmos() {
         else if (k == "jc") { int v = 0; in >> v; a.jc = v != 0; } else if (k == "jc_c") rd3(a.jcC);
         else if (k == "jc_size") rd(a.jcSize); else if (k == "jc_dur") rd(a.jcDur); else if (k == "jc_glow") rd(a.jcGlow);
         else if (k == "hs") { int v = 0; in >> v; a.hs = v != 0; } else if (k == "hs_a") rd3(a.hsA); else if (k == "hs_b") rd3(a.hsB);
-        else if (k == "hs_size") rd(a.hsSize); else if (k == "hs_dur") rd(a.hsDur); else if (k == "hs_glow") rd(a.hsGlow);
+        else if (k == "hs_mode") rd(a.hsMode); else if (k == "hs_size") rd(a.hsSize); else if (k == "hs_dur") rd(a.hsDur); else if (k == "hs_glow") rd(a.hsGlow);
         else if (k == "rp") { int v = 0; in >> v; a.rp = v != 0; } else if (k == "rp_c") rd3(a.rpC);
         else if (k == "rp_glow") rd(a.rpGlow); else if (k == "rp_dur") rd(a.rpDur);
         else if (k == "rp_crits") { int v = 1; in >> v; a.rpCrits = v != 0; } else if (k == "rp_ring") { int v = 1; in >> v; a.rpRing = v != 0; }
@@ -3199,7 +3199,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
                        float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; float wxL[4];
-                       float bo[3][4]; float wg[2][4]; float cp[3][4]; float cy[2][4]; float cu[2][4]; float ink[24][4]; float inkInfo[4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float bo[3][4]; float wg[2][4]; float cp[3][4]; float cy[2][4]; float cu[2][4]; float ink[24][4]; float inkInfo[4]; float inkD[24][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3363,6 +3363,11 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                         InkPuddle& p = gInk[gInkNext++ % 24];
                         p.x = e.x; p.y = e.y; p.z = e.z; p.at = e.atMs;
                         p.seed = float((uint64_t(e.atMs) * 2654435761ull) % 1000ull) / 1000.0f;
+                        {   // the way the ink is thrown: from you to the one you hit (Purxiy: a long splatter running away from you)
+                            double hx = e.x - ev->px, hz = e.z - ev->pz, hl = std::sqrt(hx * hx + hz * hz);
+                            if (hl > 1e-3) { p.dx = float(hx / hl); p.dz = float(hz / hl); }
+                            else { float const a = p.seed * 6.2831853f; p.dx = std::cos(a); p.dz = std::sin(a); }
+                        }
                     }
                 }
                 float const life = std::max(atm.hsDur, 8.0f);
@@ -3373,9 +3378,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                     if (age < 0.f || age > life) continue;
                     acb.ink[m][0] = float(p.x - snap.pos[0]); acb.ink[m][1] = float(p.y - snap.pos[1]); acb.ink[m][2] = float(p.z - snap.pos[2]);
                     acb.ink[m][3] = age + std::floor(p.seed * 1000.f) * 100.f;   // age + seed packed (age < 100 s)
+                    acb.inkD[m][0] = p.dx; acb.inkD[m][1] = p.dz;
                     ++m;
                 }
-                acb.inkInfo[0] = float(m); acb.inkInfo[1] = life;
+                acb.inkInfo[0] = float(m); acb.inkInfo[1] = life; acb.inkInfo[2] = atm.hsMode;
             }
             if (atm.pa) {
                 for (int k = 0; k < 3; ++k) acb.pa[0][k] = lin(atm.paC[k]);
