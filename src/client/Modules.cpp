@@ -1905,7 +1905,10 @@ void installRuntime() {
                 gFxEv.bAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             } catch (...) {}
         }
-        if (player && (Registry::get().on("motion_blur") || Registry::get().on("cute_world"))) { try { matchfx::blurActorsFrame(*player, Registry::get().on("cute_world")); } catch (...) {} }
+        // (2026-11-20 audit: Radiance, Ripple's body glass and Bokeh's subject focus all read this list of nearby bodies too -
+        //  it was only sent with Motion Blur or Cute World on, so Radiance "barely worked")
+        auto& R = Registry::get();
+        if (player && (R.on("motion_blur") || R.on("cute_world") || R.on("radiance") || R.on("ripple") || R.on("bokeh") || R.on("hit_splash"))) { try { matchfx::blurActorsFrame(*player, Registry::get().on("cute_world")); } catch (...) {} }
         if (player) { // [BF] hitch log: health drops = you took a hit (servers send health to the client)
             static int lastHp = -1;
             int const hp = player->getHealth();
