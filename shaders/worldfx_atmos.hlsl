@@ -1077,19 +1077,66 @@ float3 chroma(float3 c, float3 P, bool sky, float spareC) {
     float3 vivid = max(lerp(lc.xxx, c, 2.2), 0.0) * 1.15 + 0.02;                      // the spreading edge, saturated and lit
     return lerp(o, vivid, saturate(rim) * 0.55);
 }
+// Radiance, round 2 (Fernando 2026-11-20: "barely works, undetailed, ugly"). Was: a 1-colour line on the body's own
+// edge pixels. Now an aura AROUND the body: a crisp bright line on the silhouette, a soft glow that spills outward over
+// what is behind it (three rings of taps), a thin inner rim, and energy flowing along it - the colour sweeping into a
+// second hue and back, brighter streaks running upward. Only pixels whose ray passes near a player / mob do any work.
+float3 posAt(int2 p);
+float radBody(int2 q, int ai, float zMax) {   // 1 if pixel q is on actor ai's body and nearer than zMax
+    float d = rawDepth(q);
+    if (isSky(d)) return 0.0;
+    float3 w = posAt(q);
+    if (dot(w, w) > zMax * zMax) return 0.0;
+    float3 dd = w - aPos[ai].xyz;
+    if (dd.y < 0.25 || dd.y > aDim[ai].x) return 0.0;
+    return length(dd.xz) < aPos[ai].w - 0.15 ? 1.0 : 0.0;
+}
 float3 radiance(int2 p, float3 P, float zc) {
-    // inside a player / mob / item box, where the depth behind jumps away: the silhouette
-    if (stillWorld(P) > 0.5) return 0;
-    float w = rad0.w;
-    float zN = 1e9;
-    [unroll] for (int k = 0; k < 4; ++k) {
-        int2 o = k == 0 ? int2(1, 0) : k == 1 ? int2(-1, 0) : k == 2 ? int2(0, 1) : int2(0, -1);
-        float zz = viewZ(rawDepth(p + o * int(w)));
-        zN = min(zN, zz > zc + 0.6 ? 0.0 : 1e9);
+    int n = min(int(aInfo.x), 24);
+    float3 rdv = normalize(P);
+    int ai = -1; float bestT = 1e9;
+    [loop] for (int i = 0; i < n; ++i) {                     // the actor this pixel's ray passes closest to (if any)
+        float3 c = aPos[i].xyz + float3(0, aDim[i].x * 0.5, 0);
+        float tc = dot(c, rdv);
+        if (tc < 0.5) continue;
+        float3 off = rdv * tc - c;
+        float2 h = float2(length(off.xz), abs(off.y));
+        if (h.x > aPos[i].w + 0.5 || h.y > aDim[i].x * 0.5 + 0.5) continue;
+        if (tc < bestT) { bestT = tc; ai = i; }
     }
-    float edge = zN < 1.0 ? 1.0 : 0.0;
-    float flow = 0.6 + 0.4 * sin(c2.w * 2.0 * rad1.z + (P.x + P.y + P.z) * 3.0);
-    return rad0.rgb * (edge * (1.2 + rad1.x) * flow + rad1.y * 0.25);
+    if (ai < 0) return 0;
+    float sc = max(rad0.w, 1.0) * c4.y / 1080.0;               // widths follow the screen
+    float zSelf = length(P);
+    bool  body = radBody(p, ai, zSelf + 0.01) > 0.5;
+    float t = c2.w * max(rad1.z, 0.2);
+    float3 hue2 = rad0.rgb.gbr * 0.6 + rad0.rgb * 0.4;          // the second hue the energy sweeps into
+    float  lineK = 0.0, glow = 0.0, inner = 0.0;
+    float  ga = ign(float2(p)) * 0.8;
+    [unroll] for (int k = 0; k < 8; ++k) {
+        float a = ga + float(k) * 0.785398;
+        float2 dir = float2(cos(a), sin(a));
+        if (body) {                                              // on the body: how far in from the edge
+            float o1 = 1.0 - radBody(p + int2(dir * 1.5 * sc), ai, 1e4);
+            float o2 = 1.0 - radBody(p + int2(dir * 4.0 * sc), ai, 1e4);
+            lineK  = max(lineK, o1);
+            inner = max(inner, o2 * 0.45);
+        } else {                                                 // around it: the glow spilling out over what is behind
+            [unroll] for (int r = 0; r < 3; ++r) {
+                float rr = (r == 0 ? 2.0 : r == 1 ? 7.0 : 16.0) * sc;
+                float b = radBody(p + int2(dir * rr), ai, zSelf - 0.5);
+                if (b > 0.5) { glow = max(glow, r == 0 ? 1.0 : r == 1 ? 0.6 : 0.28); if (r == 0) lineK = max(lineK, 0.6); }
+            }
+        }
+    }
+    float3 wp = P + c5.xyz;
+    float  flowA = 0.5 + 0.5 * sin(t * 2.2 + wp.y * 2.5 + atan2(P.z - aPos[ai].z, P.x - aPos[ai].x) * 2.0);
+    float  streak = pow(saturate(sin(wp.y * 7.0 - t * 6.0 + aPos[ai].x * 3.0) * 0.5 + 0.5), 12.0);
+    float3 col = lerp(rad0.rgb, hue2, flowA * 0.6);
+    float3 o = col * glow * (0.7 + 1.3 * rad1.x) * (0.8 + 0.6 * streak)
+             + lerp(col, 1.0, 0.2) * lineK * (2.2 + 1.5 * rad1.x) * (0.85 + 0.5 * streak)
+             + col * inner * 0.6;
+    if (body) o += col * rad1.y * 0.18 * (0.7 + 0.3 * flowA);   // the fill
+    return o;
 }
 // weather: drops / flakes / embers in 1.5-block cells along the view ray (a DDA like the ambience), depth-tested
 // weather (audit 2: the 3D cell walk cost 1.9 ms and still read as a few stray streaks): rain / snow / embers on
@@ -2417,7 +2464,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     // audit: Radiance alone only writes its outlines (it cost 0.85 ms at 4K writing every pixel with nobody near)
     bool const post = ch0.w > -0.5 || wx1.w > 0.5 || bk0.w > 0.0 || cy0.w > 0.0 || cu1.w > 0.5;
     float3 radL = 0;
-    [branch] if (rad1.w > 0.5 && !sky && aInfo.x > 0.5) radL = radiance(int2(px), q, zc);   // outlines on players / mobs / items
+    [branch] if (rad1.w > 0.5 && aInfo.x > 0.5) radL = radiance(int2(px), q, zc);   // (the sky too: the aura spills over it)   // outlines on players / mobs / items
     if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post && dot(radL, 1.0) < 0.002 && overC.a < 0.002) discard;
     if (!drew) outL = col * trans + acc;
     outL = lerp(outL, overC.rgb, saturate(overC.a));
