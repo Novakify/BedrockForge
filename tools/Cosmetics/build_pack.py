@@ -108,9 +108,11 @@ def ghost_stack(img):
     the knife's own colours, lifted a little so the trail glows"""
     N = kn_anims.GHOSTS
     out = []
+    h, w = img.shape[:2]
+    small = np.asarray(Image.fromarray(img, "RGBA").resize((w // 2, h // 2), Image.LANCZOS))   # half size: 12 copies stay light
     for k in range(N):
-        a = 0.78 * (1 - k / N) ** 0.9
-        c = img.astype(np.float32).copy()
+        a = 0.72 * (1 - k / N) ** 1.2
+        c = small.astype(np.float32).copy()
         c[..., :3] = np.minimum(255.0, c[..., :3] * 1.12 + 18.0)
         c[..., 3] = c[..., 3] * a
         out.append(c.astype(np.uint8))
