@@ -238,6 +238,7 @@
     "karambit_insp3_g10": "animation.bfk.karambit.insp3.g10",
     "karambit_insp3_g11": "animation.bfk.karambit.insp3.g11",
     "karambit_insp3_g12": "animation.bfk.karambit.insp3.g12",
+    "karambit_insp4_g1": "animation.bfk.karambit.insp4.g1",
     "karambit_insp4_g2": "animation.bfk.karambit.insp4.g2",
     "karambit_insp4_g3": "animation.bfk.karambit.insp4.g3",
     "karambit_insp4_g4": "animation.bfk.karambit.insp4.g4",
@@ -453,6 +454,7 @@
     "dagger_insp3_g10": "animation.bfk.dagger.insp3.g10",
     "dagger_insp3_g11": "animation.bfk.dagger.insp3.g11",
     "dagger_insp3_g12": "animation.bfk.dagger.insp3.g12",
+    "dagger_insp4_g1": "animation.bfk.dagger.insp4.g1",
     "dagger_insp4_g2": "animation.bfk.dagger.insp4.g2",
     "dagger_insp4_g3": "animation.bfk.dagger.insp4.g3",
     "dagger_insp4_g4": "animation.bfk.dagger.insp4.g4",
@@ -956,970 +958,976 @@
       "bfk_ghost_hide": "v.bfk > 0"
      },
      {
-      "karambit_draw_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.775 && v.bfk_d * v.bfk_spd > 0.025 && !v.bfk_swinging"
+      "karambit_draw_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.784 && v.bfk_d * v.bfk_spd > 0.034 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.800 && v.bfk_d * v.bfk_spd > 0.050 && !v.bfk_swinging"
+      "karambit_draw_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.818 && v.bfk_d * v.bfk_spd > 0.068 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.825 && v.bfk_d * v.bfk_spd > 0.075 && !v.bfk_swinging"
+      "karambit_draw_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.852 && v.bfk_d * v.bfk_spd > 0.102 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.850 && v.bfk_d * v.bfk_spd > 0.100 && !v.bfk_swinging"
+      "karambit_draw_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.886 && v.bfk_d * v.bfk_spd > 0.136 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.875 && v.bfk_d * v.bfk_spd > 0.125 && !v.bfk_swinging"
+      "karambit_draw_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.920 && v.bfk_d * v.bfk_spd > 0.170 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.900 && v.bfk_d * v.bfk_spd > 0.150 && !v.bfk_swinging"
+      "karambit_draw_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.954 && v.bfk_d * v.bfk_spd > 0.204 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.925 && v.bfk_d * v.bfk_spd > 0.175 && !v.bfk_swinging"
+      "karambit_draw_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.988 && v.bfk_d * v.bfk_spd > 0.238 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.950 && v.bfk_d * v.bfk_spd > 0.200 && !v.bfk_swinging"
+      "karambit_draw_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.022 && v.bfk_d * v.bfk_spd > 0.272 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.975 && v.bfk_d * v.bfk_spd > 0.225 && !v.bfk_swinging"
+      "karambit_draw_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.056 && v.bfk_d * v.bfk_spd > 0.306 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.000 && v.bfk_d * v.bfk_spd > 0.250 && !v.bfk_swinging"
+      "karambit_draw_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.090 && v.bfk_d * v.bfk_spd > 0.340 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.025 && v.bfk_d * v.bfk_spd > 0.275 && !v.bfk_swinging"
+      "karambit_draw_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.124 && v.bfk_d * v.bfk_spd > 0.374 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.050 && v.bfk_d * v.bfk_spd > 0.300 && !v.bfk_swinging"
+      "karambit_draw_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.158 && v.bfk_d * v.bfk_spd > 0.408 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.225 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.234 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.250 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.268 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.275 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.302 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.336 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.325 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.370 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.350 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.404 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.375 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.438 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.400 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.472 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.425 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.506 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.450 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.540 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.475 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.574 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.500 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 1 && !v.bfk_swinging"
+      "karambit_insp1_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.608 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.025 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.034 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.050 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.068 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.075 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.102 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.136 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.125 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.170 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.150 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.204 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.175 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.238 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.272 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.225 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.306 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.250 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.340 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.275 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.374 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 0 && !v.bfk_swinging"
+      "karambit_insp2_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.408 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.925 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.934 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.950 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.968 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.975 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.002 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.036 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.025 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.070 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.050 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.104 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.075 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.138 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.172 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.125 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.206 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.150 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.240 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.175 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.274 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp3_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 2 && !v.bfk_swinging"
+      "karambit_insp3_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.308 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.650 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.634 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.675 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.668 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.700 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.702 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.725 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.736 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.750 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.770 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.775 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.804 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.800 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.838 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.825 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.872 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.850 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.906 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.875 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.940 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_insp4_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.900 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 3 && !v.bfk_swinging"
+      "karambit_insp4_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.974 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_swing1_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.385 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 1"
+      "karambit_insp4_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 3.008 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "karambit_swing1_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.410 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 1"
+      "karambit_swing1_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.394 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.435 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 1"
+      "karambit_swing1_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.428 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 1"
+      "karambit_swing1_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.462 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.485 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 1"
+      "karambit_swing1_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.496 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.510 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 1"
+      "karambit_swing1_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.530 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.535 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 1"
+      "karambit_swing1_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.564 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.560 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 1"
+      "karambit_swing1_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.598 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.585 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 1"
+      "karambit_swing1_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.632 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.610 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 1"
+      "karambit_swing1_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.666 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.635 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 1"
+      "karambit_swing1_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.700 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.660 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 1"
+      "karambit_swing1_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.734 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 1"
      },
      {
-      "karambit_swing2_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.385 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 0"
+      "karambit_swing1_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.768 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 1"
      },
      {
-      "karambit_swing2_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.410 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 0"
+      "karambit_swing2_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.394 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.435 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 0"
+      "karambit_swing2_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.428 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 0"
+      "karambit_swing2_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.462 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.485 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 0"
+      "karambit_swing2_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.496 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.510 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 0"
+      "karambit_swing2_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.530 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.535 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 0"
+      "karambit_swing2_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.564 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.560 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 0"
+      "karambit_swing2_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.598 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.585 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 0"
+      "karambit_swing2_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.632 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.610 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 0"
+      "karambit_swing2_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.666 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.635 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 0"
+      "karambit_swing2_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.700 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.660 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 0"
+      "karambit_swing2_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.734 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 0"
      },
      {
-      "karambit_swing3_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.385 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 2"
+      "karambit_swing2_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.768 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 0"
      },
      {
-      "karambit_swing3_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.410 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 2"
+      "karambit_swing3_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.394 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.435 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 2"
+      "karambit_swing3_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.428 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 2"
+      "karambit_swing3_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.462 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.485 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 2"
+      "karambit_swing3_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.496 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.510 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 2"
+      "karambit_swing3_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.530 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.535 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 2"
+      "karambit_swing3_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.564 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.560 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 2"
+      "karambit_swing3_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.598 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.585 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 2"
+      "karambit_swing3_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.632 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.610 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 2"
+      "karambit_swing3_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.666 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.635 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 2"
+      "karambit_swing3_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.700 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 2"
      },
      {
-      "karambit_swing3_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.660 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 2"
+      "karambit_swing3_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.734 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 2"
      },
      {
-      "karambit_swing4_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.525 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 3"
+      "karambit_swing3_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.768 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 2"
      },
      {
-      "karambit_swing4_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.550 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 3"
+      "karambit_swing4_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.534 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.575 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 3"
+      "karambit_swing4_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.568 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.600 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 3"
+      "karambit_swing4_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.602 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.625 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 3"
+      "karambit_swing4_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.636 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.650 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 3"
+      "karambit_swing4_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.670 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.675 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 3"
+      "karambit_swing4_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.704 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.700 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 3"
+      "karambit_swing4_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.738 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.725 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 3"
+      "karambit_swing4_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.772 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.750 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 3"
+      "karambit_swing4_g9": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.806 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.775 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 3"
+      "karambit_swing4_g10": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.840 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 3"
      },
      {
-      "karambit_swing4_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.800 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 3"
+      "karambit_swing4_g11": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.874 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 3"
      },
      {
-      "balisong_draw_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.975 && v.bfk_d * v.bfk_spd > 0.025 && !v.bfk_swinging"
+      "karambit_swing4_g12": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.908 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 3"
      },
      {
-      "balisong_draw_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.000 && v.bfk_d * v.bfk_spd > 0.050 && !v.bfk_swinging"
+      "balisong_draw_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.984 && v.bfk_d * v.bfk_spd > 0.034 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.025 && v.bfk_d * v.bfk_spd > 0.075 && !v.bfk_swinging"
+      "balisong_draw_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.018 && v.bfk_d * v.bfk_spd > 0.068 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.050 && v.bfk_d * v.bfk_spd > 0.100 && !v.bfk_swinging"
+      "balisong_draw_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.052 && v.bfk_d * v.bfk_spd > 0.102 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.075 && v.bfk_d * v.bfk_spd > 0.125 && !v.bfk_swinging"
+      "balisong_draw_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.086 && v.bfk_d * v.bfk_spd > 0.136 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.100 && v.bfk_d * v.bfk_spd > 0.150 && !v.bfk_swinging"
+      "balisong_draw_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.120 && v.bfk_d * v.bfk_spd > 0.170 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.125 && v.bfk_d * v.bfk_spd > 0.175 && !v.bfk_swinging"
+      "balisong_draw_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.154 && v.bfk_d * v.bfk_spd > 0.204 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.150 && v.bfk_d * v.bfk_spd > 0.200 && !v.bfk_swinging"
+      "balisong_draw_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.188 && v.bfk_d * v.bfk_spd > 0.238 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.175 && v.bfk_d * v.bfk_spd > 0.225 && !v.bfk_swinging"
+      "balisong_draw_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.222 && v.bfk_d * v.bfk_spd > 0.272 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.200 && v.bfk_d * v.bfk_spd > 0.250 && !v.bfk_swinging"
+      "balisong_draw_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.256 && v.bfk_d * v.bfk_spd > 0.306 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.225 && v.bfk_d * v.bfk_spd > 0.275 && !v.bfk_swinging"
+      "balisong_draw_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.290 && v.bfk_d * v.bfk_spd > 0.340 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.250 && v.bfk_d * v.bfk_spd > 0.300 && !v.bfk_swinging"
+      "balisong_draw_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.324 && v.bfk_d * v.bfk_spd > 0.374 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.225 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_draw_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.358 && v.bfk_d * v.bfk_spd > 0.408 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.250 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.234 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.275 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.268 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.302 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.325 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.336 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.350 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.370 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.375 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.404 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.400 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.438 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.425 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.472 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.450 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.506 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.475 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.540 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.500 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 1 && !v.bfk_swinging"
+      "balisong_insp1_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.574 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.025 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp1_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.608 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.050 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.034 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.075 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.068 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.102 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.125 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.136 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.150 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.170 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.175 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.204 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.238 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.225 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.272 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.250 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.306 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.275 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.340 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 0 && !v.bfk_swinging"
+      "balisong_insp2_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.374 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.225 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp2_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.408 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.250 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.234 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.275 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.268 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.302 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.325 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.336 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.350 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.370 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.375 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.404 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.400 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.438 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.425 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.472 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.450 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.506 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.475 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.540 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp3_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.500 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 2 && !v.bfk_swinging"
+      "balisong_insp3_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.574 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.425 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp3_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.608 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.450 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.434 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.475 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.468 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.500 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.502 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.525 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.536 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.550 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.570 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.575 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.604 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.600 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.638 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.625 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.672 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.650 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.706 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.675 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.740 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_insp4_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.700 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 3 && !v.bfk_swinging"
+      "balisong_insp4_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.774 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_swing1_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.345 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 1"
+      "balisong_insp4_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.808 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "balisong_swing1_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.370 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 1"
+      "balisong_swing1_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.354 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.395 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 1"
+      "balisong_swing1_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.388 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 1"
+      "balisong_swing1_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.422 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.445 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 1"
+      "balisong_swing1_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.456 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.470 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 1"
+      "balisong_swing1_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.490 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.495 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 1"
+      "balisong_swing1_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.524 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 1"
+      "balisong_swing1_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.558 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.545 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 1"
+      "balisong_swing1_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.592 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.570 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 1"
+      "balisong_swing1_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.626 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.595 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 1"
+      "balisong_swing1_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.660 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.620 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 1"
+      "balisong_swing1_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.694 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 1"
      },
      {
-      "balisong_swing2_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.325 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 0"
+      "balisong_swing1_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.728 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 1"
      },
      {
-      "balisong_swing2_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.350 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 0"
+      "balisong_swing2_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.334 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.375 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 0"
+      "balisong_swing2_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.368 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 0"
+      "balisong_swing2_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.402 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.425 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 0"
+      "balisong_swing2_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.436 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.450 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 0"
+      "balisong_swing2_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.470 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.475 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 0"
+      "balisong_swing2_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.504 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.500 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 0"
+      "balisong_swing2_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.538 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.525 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 0"
+      "balisong_swing2_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.572 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.550 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 0"
+      "balisong_swing2_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.606 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.575 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 0"
+      "balisong_swing2_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.640 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.600 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 0"
+      "balisong_swing2_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.674 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 0"
      },
      {
-      "balisong_swing3_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.345 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 2"
+      "balisong_swing2_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.708 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 0"
      },
      {
-      "balisong_swing3_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.370 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 2"
+      "balisong_swing3_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.354 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.395 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 2"
+      "balisong_swing3_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.388 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 2"
+      "balisong_swing3_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.422 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.445 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 2"
+      "balisong_swing3_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.456 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.470 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 2"
+      "balisong_swing3_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.490 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.495 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 2"
+      "balisong_swing3_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.524 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 2"
+      "balisong_swing3_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.558 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.545 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 2"
+      "balisong_swing3_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.592 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.570 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 2"
+      "balisong_swing3_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.626 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.595 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 2"
+      "balisong_swing3_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.660 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 2"
      },
      {
-      "balisong_swing3_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.620 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 2"
+      "balisong_swing3_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.694 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 2"
      },
      {
-      "balisong_swing4_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.525 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 3"
+      "balisong_swing3_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.728 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 2"
      },
      {
-      "balisong_swing4_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.550 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 3"
+      "balisong_swing4_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.534 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.575 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 3"
+      "balisong_swing4_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.568 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.600 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 3"
+      "balisong_swing4_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.602 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.625 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 3"
+      "balisong_swing4_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.636 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.650 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 3"
+      "balisong_swing4_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.670 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.675 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 3"
+      "balisong_swing4_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.704 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.700 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 3"
+      "balisong_swing4_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.738 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.725 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 3"
+      "balisong_swing4_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.772 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.750 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 3"
+      "balisong_swing4_g9": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.806 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.775 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 3"
+      "balisong_swing4_g10": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.840 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 3"
      },
      {
-      "balisong_swing4_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.800 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 3"
+      "balisong_swing4_g11": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.874 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 3"
      },
      {
-      "dagger_draw_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.825 && v.bfk_d * v.bfk_spd > 0.025 && !v.bfk_swinging"
+      "balisong_swing4_g12": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.908 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 3"
      },
      {
-      "dagger_draw_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.850 && v.bfk_d * v.bfk_spd > 0.050 && !v.bfk_swinging"
+      "dagger_draw_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.834 && v.bfk_d * v.bfk_spd > 0.034 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.875 && v.bfk_d * v.bfk_spd > 0.075 && !v.bfk_swinging"
+      "dagger_draw_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.868 && v.bfk_d * v.bfk_spd > 0.068 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.900 && v.bfk_d * v.bfk_spd > 0.100 && !v.bfk_swinging"
+      "dagger_draw_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.902 && v.bfk_d * v.bfk_spd > 0.102 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.925 && v.bfk_d * v.bfk_spd > 0.125 && !v.bfk_swinging"
+      "dagger_draw_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.936 && v.bfk_d * v.bfk_spd > 0.136 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.950 && v.bfk_d * v.bfk_spd > 0.150 && !v.bfk_swinging"
+      "dagger_draw_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.970 && v.bfk_d * v.bfk_spd > 0.170 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.975 && v.bfk_d * v.bfk_spd > 0.175 && !v.bfk_swinging"
+      "dagger_draw_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.004 && v.bfk_d * v.bfk_spd > 0.204 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.000 && v.bfk_d * v.bfk_spd > 0.200 && !v.bfk_swinging"
+      "dagger_draw_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.038 && v.bfk_d * v.bfk_spd > 0.238 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.025 && v.bfk_d * v.bfk_spd > 0.225 && !v.bfk_swinging"
+      "dagger_draw_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.072 && v.bfk_d * v.bfk_spd > 0.272 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.050 && v.bfk_d * v.bfk_spd > 0.250 && !v.bfk_swinging"
+      "dagger_draw_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.106 && v.bfk_d * v.bfk_spd > 0.306 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.075 && v.bfk_d * v.bfk_spd > 0.275 && !v.bfk_swinging"
+      "dagger_draw_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.140 && v.bfk_d * v.bfk_spd > 0.340 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.100 && v.bfk_d * v.bfk_spd > 0.300 && !v.bfk_swinging"
+      "dagger_draw_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.174 && v.bfk_d * v.bfk_spd > 0.374 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.125 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_draw_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.208 && v.bfk_d * v.bfk_spd > 0.408 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.150 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.134 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.175 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.168 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.202 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.225 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.236 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.250 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.270 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.275 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.304 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.338 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.325 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.372 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.350 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.406 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.375 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.440 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.400 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 1 && !v.bfk_swinging"
+      "dagger_insp1_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.474 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.925 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp1_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.508 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.950 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.934 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.975 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.968 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.002 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.025 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.036 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.050 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.070 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.075 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.104 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.138 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.125 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.172 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.150 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.206 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.175 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.240 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 0 && !v.bfk_swinging"
+      "dagger_insp2_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.274 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.225 && v.bfk_i * v.bfk_spd > 0.025 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp2_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.308 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.250 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.234 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.275 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.268 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.302 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.325 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.336 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.350 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.370 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.375 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.404 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.400 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.438 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.425 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.472 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.450 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.506 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.475 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.540 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp3_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.500 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 2 && !v.bfk_swinging"
+      "dagger_insp3_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.574 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.550 && v.bfk_i * v.bfk_spd > 0.050 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp3_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.608 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 2 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.575 && v.bfk_i * v.bfk_spd > 0.075 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.534 && v.bfk_i * v.bfk_spd > 0.034 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.600 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.568 && v.bfk_i * v.bfk_spd > 0.068 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.625 && v.bfk_i * v.bfk_spd > 0.125 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.602 && v.bfk_i * v.bfk_spd > 0.102 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.650 && v.bfk_i * v.bfk_spd > 0.150 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.636 && v.bfk_i * v.bfk_spd > 0.136 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.675 && v.bfk_i * v.bfk_spd > 0.175 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.670 && v.bfk_i * v.bfk_spd > 0.170 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.700 && v.bfk_i * v.bfk_spd > 0.200 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.704 && v.bfk_i * v.bfk_spd > 0.204 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.725 && v.bfk_i * v.bfk_spd > 0.225 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.738 && v.bfk_i * v.bfk_spd > 0.238 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.750 && v.bfk_i * v.bfk_spd > 0.250 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.772 && v.bfk_i * v.bfk_spd > 0.272 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.775 && v.bfk_i * v.bfk_spd > 0.275 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.806 && v.bfk_i * v.bfk_spd > 0.306 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_insp4_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.800 && v.bfk_i * v.bfk_spd > 0.300 && v.bfk_in == 3 && !v.bfk_swinging"
+      "dagger_insp4_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.840 && v.bfk_i * v.bfk_spd > 0.340 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_swing1_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.325 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 1"
+      "dagger_insp4_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.874 && v.bfk_i * v.bfk_spd > 0.374 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_swing1_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.350 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 1"
+      "dagger_insp4_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.908 && v.bfk_i * v.bfk_spd > 0.408 && v.bfk_in == 3 && !v.bfk_swinging"
      },
      {
-      "dagger_swing1_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.375 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 1"
+      "dagger_swing1_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.334 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 1"
+      "dagger_swing1_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.368 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.425 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 1"
+      "dagger_swing1_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.402 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.450 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 1"
+      "dagger_swing1_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.436 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.475 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 1"
+      "dagger_swing1_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.470 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.500 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 1"
+      "dagger_swing1_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.504 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.525 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 1"
+      "dagger_swing1_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.538 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.550 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 1"
+      "dagger_swing1_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.572 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.575 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 1"
+      "dagger_swing1_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.606 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.600 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 1"
+      "dagger_swing1_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.640 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 1"
      },
      {
-      "dagger_swing2_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.365 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 0"
+      "dagger_swing1_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.674 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 1"
      },
      {
-      "dagger_swing2_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.390 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 0"
+      "dagger_swing1_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.708 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 1"
      },
      {
-      "dagger_swing2_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.415 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 0"
+      "dagger_swing2_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.374 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 0"
+      "dagger_swing2_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.408 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.465 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 0"
+      "dagger_swing2_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.442 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.490 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 0"
+      "dagger_swing2_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.476 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.515 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 0"
+      "dagger_swing2_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.510 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.540 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 0"
+      "dagger_swing2_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.544 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.565 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 0"
+      "dagger_swing2_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.578 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.590 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 0"
+      "dagger_swing2_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.612 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.615 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 0"
+      "dagger_swing2_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.646 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.640 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 0"
+      "dagger_swing2_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.680 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 0"
      },
      {
-      "dagger_swing3_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.345 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 2"
+      "dagger_swing2_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.714 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 0"
      },
      {
-      "dagger_swing3_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.370 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 2"
+      "dagger_swing2_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.748 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 0"
      },
      {
-      "dagger_swing3_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.395 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 2"
+      "dagger_swing3_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.354 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 2"
+      "dagger_swing3_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.388 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.445 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 2"
+      "dagger_swing3_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.422 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.470 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 2"
+      "dagger_swing3_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.456 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.495 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 2"
+      "dagger_swing3_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.490 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 2"
+      "dagger_swing3_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.524 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.545 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 2"
+      "dagger_swing3_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.558 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.570 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 2"
+      "dagger_swing3_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.592 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.595 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 2"
+      "dagger_swing3_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.626 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 2"
      },
      {
-      "dagger_swing3_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.620 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 2"
+      "dagger_swing3_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.660 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 2"
      },
      {
-      "dagger_swing4_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.505 && v.bfk_a * v.bfk_spd > 0.025 && v.bfk_an == 3"
+      "dagger_swing3_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.694 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 2"
      },
      {
-      "dagger_swing4_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.530 && v.bfk_a * v.bfk_spd > 0.050 && v.bfk_an == 3"
+      "dagger_swing3_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.728 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 2"
      },
      {
-      "dagger_swing4_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.555 && v.bfk_a * v.bfk_spd > 0.075 && v.bfk_an == 3"
+      "dagger_swing4_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.514 && v.bfk_a * v.bfk_spd > 0.034 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.580 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 3"
+      "dagger_swing4_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.548 && v.bfk_a * v.bfk_spd > 0.068 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.605 && v.bfk_a * v.bfk_spd > 0.125 && v.bfk_an == 3"
+      "dagger_swing4_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.582 && v.bfk_a * v.bfk_spd > 0.102 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.630 && v.bfk_a * v.bfk_spd > 0.150 && v.bfk_an == 3"
+      "dagger_swing4_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.616 && v.bfk_a * v.bfk_spd > 0.136 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.655 && v.bfk_a * v.bfk_spd > 0.175 && v.bfk_an == 3"
+      "dagger_swing4_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.650 && v.bfk_a * v.bfk_spd > 0.170 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.680 && v.bfk_a * v.bfk_spd > 0.200 && v.bfk_an == 3"
+      "dagger_swing4_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.684 && v.bfk_a * v.bfk_spd > 0.204 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.705 && v.bfk_a * v.bfk_spd > 0.225 && v.bfk_an == 3"
+      "dagger_swing4_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.718 && v.bfk_a * v.bfk_spd > 0.238 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.730 && v.bfk_a * v.bfk_spd > 0.250 && v.bfk_an == 3"
+      "dagger_swing4_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.752 && v.bfk_a * v.bfk_spd > 0.272 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.755 && v.bfk_a * v.bfk_spd > 0.275 && v.bfk_an == 3"
+      "dagger_swing4_g9": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.786 && v.bfk_a * v.bfk_spd > 0.306 && v.bfk_an == 3"
      },
      {
-      "dagger_swing4_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.780 && v.bfk_a * v.bfk_spd > 0.300 && v.bfk_an == 3"
+      "dagger_swing4_g10": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.820 && v.bfk_a * v.bfk_spd > 0.340 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g11": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.854 && v.bfk_a * v.bfk_spd > 0.374 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g12": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.888 && v.bfk_a * v.bfk_spd > 0.408 && v.bfk_an == 3"
      },
      {
       "hit_a_fx": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 1 && v.bfk_hfx"
