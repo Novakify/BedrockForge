@@ -1,3 +1,4 @@
+#include "ll/api/event/world/ClientLevelTickEvent.h"
 #include <cstdio>
 #include <cctype>
 #include <array>
@@ -810,6 +811,7 @@ uint32_t         gBlurActorsFrame = 0;
 } // namespace
 extern "C" __declspec(dllexport) BfBlurActorsV1 const* BF_GetBlurActors() { return &gBlurActors[gBlurActorsCur.load(std::memory_order_acquire)]; }
 namespace bedrock_forge::client::matchfx {
+std::atomic<int64_t> gTickMs{0};   // the last client level tick (for the frame's interpolation alpha)
 void blurActorsFrame(LocalPlayer& lp, bool cuteOn) {
     int const w = gBlurActorsCur.load(std::memory_order_relaxed) ^ 1;
     BfBlurActorsV1& o = gBlurActors[w];
@@ -825,12 +827,24 @@ void blurActorsFrame(LocalPlayer& lp, bool cuteOn) {
                 try { auto const d = a->getPosDelta(); dx = d.x; dy = d.y; dz = d.z; } catch (...) {}
                 if (!player && !cuteOn && dx * dx + dy * dy + dz * dz < 0.004f * 0.004f) continue;   // it stands still: part of the world, it blurs with it
                 auto const& bb = a->getAABB();
-                float const cx = (bb.min.x + bb.max.x) * 0.5f, cz = (bb.min.z + bb.max.z) * 0.5f;
+                // (Fernando 2026-11-20: "cute faces glitching in match and flickering") the box is the TICK position -
+                // up to a tick (50 ms: a sprint-strafe or a knockback, 0.3+ blocks) away from where the body is drawn, so
+                // the face slid off the head and the front-face test failed and passed frame to frame. Drawn = where the
+                // game interpolates it this frame: shift the box by (interpolated - tick position).
+                float ix = 0.f, iy = 0.f, iz = 0.f;
+                try {
+                    float const al = std::clamp(float(nowMs() - gTickMs.load(std::memory_order_relaxed)) / 50.0f, 0.0f, 1.0f);
+                    auto const ip = a->getInterpolatedPosition(al);
+                    auto const tp = a->getPosition();
+                    ix = ip.x - tp.x, iy = ip.y - tp.y, iz = ip.z - tp.z;
+                    if (ix * ix + iy * iy + iz * iz > 4.0f) ix = iy = iz = 0.f;   // a teleport: trust the box
+                } catch (...) {}
+                float const cx = (bb.min.x + bb.max.x) * 0.5f + ix, cz = (bb.min.z + bb.max.z) * 0.5f + iz;
                 if ((cx - me.x) * (cx - me.x) + (cz - me.z) * (cz - me.z) > 64.0f * 64.0f) continue;
                 // room for arms, a held sword, a cape - and for the tick the client's position runs behind what is drawn
                 float const lagH = std::min(std::hypot(dx, dz), 0.6f), lagV = std::min(std::fabs(dy), 0.6f);
                 auto& e = o.a[o.count++];
-                e.x = cx; e.z = cz; e.y = bb.min.y - 0.1f - lagV;
+                e.x = cx; e.z = cz; e.y = bb.min.y + iy - 0.1f - lagV;
                 e.r = std::max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) * 0.5f + (player ? 0.45f : 0.2f) + lagH;
                 e.h = (bb.max.y - bb.min.y) + 0.45f + 2.0f * lagV;
                 // [Cute World] where its face points (head yaw, radians) and its real box, so RF can paint anime eyes on it
@@ -885,6 +899,7 @@ namespace bedrock_forge::client::matchfx {
 void install() {
     gSubs.on<ll::event::BlockChangedEvent>([](ll::event::BlockChangedEvent& ev) { try { onChange(ev); } catch (...) {} });
     gSubs.on<ll::event::ClientJoinLevelEvent>([](ll::event::ClientJoinLevelEvent&) { gNewLevel = true; });
+    gSubs.on<ll::event::ClientLevelTickEvent>([](ll::event::ClientLevelTickEvent&) { gTickMs.store(nowMs(), std::memory_order_relaxed); });
 }
 void uninstall() { gSubs.clear(); }
 

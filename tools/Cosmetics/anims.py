@@ -251,7 +251,7 @@ GLINT_AT = {"draw": 0.8, "insp1": 0.6, "insp2": 0.6, "insp3": 0.66, "insp4": 0.5
 
 
 GHOSTS = 12           # afterimage copies per knife (12: reads as a smooth blur, not separate copies)
-GHOST_DT = 0.025      # seconds between copies (12 x 25 ms: the last 300 ms of motion)
+GHOST_DT = 0.034      # seconds between copies (12 x 34 ms: the last ~400 ms of motion - a long, visible smear)
 
 
 def ghost_bone(bone, g):

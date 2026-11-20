@@ -111,9 +111,10 @@ def ghost_stack(img):
     h, w = img.shape[:2]
     small = np.asarray(Image.fromarray(img, "RGBA").resize((w // 2, h // 2), Image.LANCZOS))   # half size: 12 copies stay light
     for k in range(N):
-        a = 0.72 * (1 - k / N) ** 1.2
+        a = 0.95 * (1 - k / N) ** 0.75   # (Fernando 2026-11-20: "still barely noticeable" - near solid, slow fade)
         c = small.astype(np.float32).copy()
-        c[..., :3] = np.minimum(255.0, c[..., :3] * 1.12 + 18.0)
+        lum = c[..., :3].mean(axis=-1, keepdims=True)
+        c[..., :3] = np.minimum(255.0, (lum + (c[..., :3] - lum) * 1.45) * 1.30 + 34.0)   # its own colours, saturated, glowing
         c[..., 3] = c[..., 3] * a
         out.append(c.astype(np.uint8))
     return np.concatenate(out, axis=0)
