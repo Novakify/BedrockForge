@@ -96,7 +96,7 @@ void uninstall();
 /// every HUD frame (client thread)
 void frame(IClientInstance& client, LocalPlayer* player);
 /// Once per HUD frame while a world is on screen: refresh BF_GetBlurActors().
-void blurActorsFrame(LocalPlayer& player, bool cuteOn = false);
+void blurActorsFrame(LocalPlayer& player, bool cuteOn = false, bool keepStill = false);
 void noteHit(uint64_t runtimeId);   // [Cute World] your hit landed on this actor: its face reacts
 /// chat / title text (fallback for servers that remove beds without a block update we see)
 void onText(std::string const& message);
