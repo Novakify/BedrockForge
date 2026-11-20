@@ -245,7 +245,11 @@ void frame(LocalPlayer* lp) {
             // attack: every left click while holding the knife (hits and misses), confirmed hits from the attack hook
             int const cset = int(m->num("fx_color", 0));   // 0 = random: a new colour every swing
             bool const lmb = input && w32::keyDown(0x01);
-            if (((lmb && !gS.lmbWas) || gTestSwing.exchange(0) > 0) && sword) {
+            // (Fernando 2026-11-19: "at PvP click speed you barely see the swing and the afterimage never shows" - every
+            //  click restarted the swing from 0, ~10 times a second.) A click starts a new swing only once the current
+            //  one has played 190 ms: every swing (and its ghost trail) is seen; the hits themselves are unaffected.
+            bool const clicked = (lmb && !gS.lmbWas) || gTestSwing.exchange(0) > 0;
+            if (clicked && sword && (gS.attackAt == 0 || now - gS.attackAt >= 190)) {
                 // combo chain: clicks inside 0.5 s of the last one run swing 1 -> 2 -> 3 -> 4 (the finisher), then start
                 // over; slower clicks just alternate 1 / 2 like before
                 bool const fast = gS.attackAt != 0 && now - gS.attackAt < 500;
