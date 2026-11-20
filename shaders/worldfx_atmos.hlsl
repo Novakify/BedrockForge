@@ -1678,7 +1678,7 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
         float3 ghost = acc * lumW * 0.55 + lumW * 0.06;          // what shows through: the clouds as faint accent ghosts, never their own hue
         c += ghost * 0.08;
         float ageS = abs(cy1.w) - 1.0;
-        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 0.65) * 5.0));   // the sky turns once the front has passed
+        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 5.0) / 2.5));   // the sky turns once the slow front has rolled out (Fernando: the take-over must be slow)
     }
     // (audit vs Purxiy: 1 px depth normals were noisy - blocks crawled with dots. Centred 3 px differences.)
     float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
@@ -1724,6 +1724,14 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
         dT = max(dT, -(length(q - float2(x1, y1)) - 0.055));                // the via is hollow: the trace stops at its ring
     }
     float circuits = max(1.0 - smoothstep(lw, lw + px1, dT), 1.0 - smoothstep(lw, lw + px1, dV)) * cy1.y;
+    // (round 4, Fernando: "looks way better but still kinda plain") detail between the traces: a faint quarter grid
+    // on every face, a few faces lit as glowing panels that breathe, and soft bands of light climbing the walls
+    float2 f4 = frac(uv * 4.0);
+    float  sub = (1.0 - smoothstep(0.5, 1.4, min(min(f4.x, 1.0 - f4.x), min(f4.y, 1.0 - f4.y)) / (aa.x * 4.0))) * far * 0.22;
+    float  h2p = cyHash(fid + 5.31);
+    float  panel = h2p < 0.06 ? (0.35 + 0.65 * pow(0.5 + 0.5 * sin(t * (1.2 + 3.0 * h2p) + h2p * 60.0), 3.0)) : 0.0;
+    panel *= smoothstep(0.0, 0.12, min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y))) * 0.30;   // inset from the edges
+    float  climb = an.y < 0.5 ? exp(-pow((frac(wp.y * 0.25 - t * 0.35 + h1 * 0.3) - 0.5) / 0.05, 2.0)) * 0.35 * far : 0.0;
     circuits *= smoothstep(0.08, 0.03, px1);                                // too far to resolve: leave the face plain
     // light packets: bright comets with short tails running along the block edges of the ground
     float packets = 0.0;
@@ -1749,6 +1757,7 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float3 base = acc * (0.012 + 0.06 * lumW) + lumW * 0.025;            // the world, near black (Purxiy: #1a1020-ish)
     float3 lc = lerp(acc, float3(1.0, 1.0, 1.0), 0.45);                    // white-hot line cores, the accent in the glow
     float3 lines = lc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.5) + acc * (edgeGlow * cy1.x + circuits * pulse * 0.65 * cy1.x + scan * 0.35)
+                 + acc * (sub + panel + climb) * cy1.x
                  + (float3(1.0, 1.0, 1.0) * 0.6 + acc) * packets * cy1.x;
     float3 dig = base + lines * fog + acc * scan * 0.12;
     // you become a hologram (Purxiy reference: the player goes dark with bright lavender scanlines drifting up)
@@ -1772,12 +1781,21 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
         return dig + float3(1.0, 0.1, 0.1) * eR * 1.2 + float3(0.1, 0.9, 1.0) * eB * 1.2;
     }
     if (age < 0.0) return L;
-    float R = age * 260.0;                                                // blocks: past the view in ~0.4 s
+    // (Fernando 2026-11-20: "the part where the world slowly goes cyber should be a lot slower") the front walks out
+    // from you and speeds up: ~3 blocks in the first half second, 25 by 1.5 s, the horizon by ~4 s. Behind it the world
+    // does not switch at once: for a block or two it is half real, half wireframe, flickering in cell by cell.
+    float R = 1.0 + 3.0 * age + 2.2 * age * age;   // ~16 blocks at 2 s, ~48 at 4 s, the horizon by ~7 s
     float d3 = length(P);
-    float inside = smoothstep(R + 1.5, R - 1.5, d3);
-    float frontW = exp(-pow((d3 - R) / (0.7 + 0.012 * R), 2.0)) * exp(-age * 2.5);
-    float3 o = lerp(L, dig, reality * inside);
-    return o + (float3(1.0, 0.98, 0.95) * 0.7 + acc * 1.1) * frontW * step(age, 1.5);
+    float band = 2.0 + 0.06 * R;                                          // the transition zone behind the front
+    float cellK = cyHash(floor(c5.xyz + P) + 0.37);                        // blocks flip one by one, not as a smooth wipe
+    float inside = saturate((R - d3) / band - cellK * 0.8 + 0.4);
+    inside = inside * inside * (3.0 - 2.0 * inside);
+    float flick = step(0.5, frac(t * 23.0 + cellK * 7.0)) * step(inside, 0.95) * step(0.05, inside);   // the flip flickers
+    inside = saturate(inside + flick * 0.35);
+    float frontW = exp(-pow((d3 - R) / (0.5 + 0.02 * R), 2.0)) * (1.0 - smoothstep(7.0, 9.0, age));
+    float wake = exp(-max(R - d3, 0.0) / (1.5 + 0.05 * R)) * step(d3, R) * (1.0 - smoothstep(7.0, 9.0, age));   // the lines glow hot just behind it
+    float3 o = lerp(L, dig + lines * fog * wake * 0.8, reality * inside);
+    return o + (float3(1.0, 0.98, 0.95) * 0.55 + acc * 1.2) * frontW;
 }
 
 // Cyberspace extras (round 3, from video 3 at 121.5-125 s): data packets - small glowing cubes flying in straight
@@ -2403,7 +2421,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     [branch] if (cy0.w > 0.0) {
         float cyAge = abs(cy1.w) - 1.0;
         outL = cyberspace(outL, int2(px), q, rd, sky ? 1e4 : dist, sky, t);
-        if (cyAge > 0.45) outL += cyPackets(rd, sky ? 1e4 : dist, t) * smoothstep(0.45, 0.9, cyAge);
+        if (cyAge > 2.5) outL += cyPackets(rd, sky ? 1e4 : dist, t) * smoothstep(2.5, 6.0, cyAge);
         [branch] if (cyAge < 0.30) outL = cyIntro(outL, int2(px), cyAge);
     }
     [branch] if (cu1.w > 0.5) outL = cuteWorld(outL, q, rd, sky ? 1e4 : dist, sky, t);
