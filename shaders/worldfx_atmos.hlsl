@@ -1171,6 +1171,12 @@ float3 radiance(int2 p, float3 P, float zc) {
         float  Hh = clamp(fmod(aDim[i].w, 1000.0), 0.5, 3.0);
         float3 cc = aPos[i].xyz + float3(0, 0.1 + Hh * 0.5, 0);
         if (length(cc.xz) < 0.7 && cc.y > -2.2 && cc.y < 0.2) continue;   // you, from your own eyes
+        {   // (in game 2026-11-20: a villager walked into the camera and its fire filled the screen) - the camera inside / at
+            //  a body: no aura for it
+            float3 cd = -aPos[i].xyz;
+            float  hwC = aPos[i].w - (aDim[i].w > 999.0 ? 0.45 : 0.2) + 0.7;
+            if (max(abs(cd.x), abs(cd.z)) < hwC && cd.y > -0.5 && cd.y < Hh + 1.2) continue;
+        }
         float  tc = dot(cc, rdv);
         if (tc < 0.5 || tc > 64.0) continue;   // (perf audit: no outline work past 64 blocks)
         float3 off = rdv * tc - cc;
