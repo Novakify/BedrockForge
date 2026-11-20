@@ -1293,13 +1293,13 @@ float sdSeg(float2 p, float2 a, float2 b) { float2 pa = p - a, ba = b - a; retur
 float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float capeT) {
     float3 L = 0;
     if (pl.w < -50.0) return L;
-    bool  fp  = length(pl.xyz + float3(0, 1.62, 0)) < 0.6;
+    bool  fp  = length(pl.xyz + float3(0, 1.62, 0)) < 0.9;   // (wider: sneaking / swimming moved the eye)
     float yaw = pl.w;
     float3 fwd  = float3(-sin(yaw), 0, cos(yaw));
     float3 side = float3(cos(yaw), 0, sin(yaw));
     float3 up   = float3(0, 1, 0);
     // -------- wings
-    [branch] if (wg0.w > 0.0 && (!fp || wg1.w > 0.0)) {
+    [branch] if (wg0.w > 0.0 && !fp) {   // (Fernando: never in first person - one wing showed at the edge of the view)
         int   design = int(wg1.x + 0.5);
         float S = wg0.w;
         // (Purxiy reference, video 1: the wings pop in folded down the back, then sweep up and out with an overshoot in
@@ -2171,12 +2171,18 @@ float3 cuteEyes(float3 o, float3 P) {
         bool  humanoid = player || (realH > 1.55 && realH < 2.3);
         float hs = humanoid ? 0.25 : clamp(realH * 0.28, 0.16, 0.28);
         float top = 0.1 + realH;
-        float yaw = aDim[i].y;
-        float3 fwd = float3(-sin(yaw), 0, cos(yaw)), side = float3(cos(yaw), 0, sin(yaw));
-        float3 hc = aPos[i].xyz + float3(0, top - (player ? 0.05 : humanoid ? 0.12 : hs), 0) + (humanoid ? 0.0 : max(aPos[i].w - 0.2, 0.2)) * fwd;
+        // head yaw + pitch (packed by BF: yaw + 10 * (pitch deg + 90)); the head turns about the neck
+        float pk = floor((aDim[i].y + 5.0) / 10.0);
+        float yaw = aDim[i].y - pk * 10.0, pit = (pk - 90.0) * 0.01745329;
+        float3 hf = float3(-sin(yaw), 0, cos(yaw)), side = float3(cos(yaw), 0, sin(yaw));
+        float3 fwd = hf * cos(pit) - float3(0, sin(pit), 0);
+        float3 upv = float3(0, cos(pit), 0) + hf * sin(pit);
+        float3 hc0 = aPos[i].xyz + float3(0, top - (player ? 0.05 : humanoid ? 0.12 : hs), 0) + (humanoid ? 0.0 : max(aPos[i].w - 0.2, 0.2)) * hf;
+        float3 neck = hc0 - float3(0, hs, 0);
+        float3 hc = neck + upv * hs;
         float3 lp = P - hc;
         if (dot(lp, lp) > 0.6) continue;
-        float z = dot(lp, fwd), x = dot(lp, side) / hs, y = lp.y / hs;
+        float z = dot(lp, fwd), x = dot(lp, side) / hs, y = dot(lp, upv) / hs;
         float zLo = humanoid ? 0.8 : 0.3, zHi = humanoid ? 1.3 : 2.2;
         if (z < hs * zLo || z > hs * zHi || abs(x) > 1.0 || abs(y) > 1.0) continue;   // only the front face
         if (fresh > 0.5) { float2 j = float2(sin(c2.w * 60.0), cos(c2.w * 47.0)) * 0.03; x += j.x; y += j.y; }   // a shake right after a hit   // a little shake
