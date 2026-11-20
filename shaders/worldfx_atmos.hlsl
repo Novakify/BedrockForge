@@ -330,7 +330,7 @@ float3 inkPuddles(float3 P, float upN, float t) {
         float splat = 1.0 - smoothstep(-0.01, 0.015, spl);
         float ink   = max(max(blob, splat), specks);
         float inner = max(saturate(1.0 - rq / (0.75 * Sz)), saturate(-spl / (0.06 * Sz)) * splat);   // white-hot at the core and the splats' hearts
-        float halo  = exp(-max(min(dm, spl), 0.0) / (0.30 * Sz)) * (1.0 - ink) + 0.10 * exp(-rq / (1.0 * Sz));
+        float halo  = exp(-max(min(dm, spl), 0.0) / (0.06 * Sz)) * (1.0 - ink);   // (Fernando: no mist round it - only a tight glow hugging the ink)
         float rim   = exp(-pow(min(dm, spl) / (0.035 * Sz), 2.0));
         float gloss = 0.0;
         // colour mode
@@ -346,7 +346,7 @@ float3 inkPuddles(float3 P, float upN, float t) {
         float3 oHalo = col * halo * (0.55 + 0.6 * fx2.w);
         float  k = pop * pulse * fade * smoothstep(0.0, 1.1, 2.6 + dv.y);
         if (ink > 0.02 && age < topAge) { topAge = age; topC = oInk * k; topA = ink; }   // the newest lies on top
-        haloL += oHalo * k * 0.4;                                                        // the glows add up as they stack
+        haloL += oHalo * k * 0.5;                                                        // the glows add up as they stack
     }
     L = lerp(min(haloL, 1.2), topC, topA);
     return L;
@@ -1096,6 +1096,42 @@ float3 radiance(int2 p, float3 P, float zc) {
 // cylinders around you at four distances. Each cylinder is cut into thin columns; each column carries drops that fall
 // (or rise) through it. A drop is drawn only if that cylinder is nearer than the world at this pixel, so it is
 // depth-correct. Four layers make the depth; the near layer is sparse and big, the far ones dense and fine. ~0.3 ms.
+static const float LAVA_C = 4.0;
+void lavaCellLife(float2 cid, float t, out float2 ctr, out float age, out float per, out float rmax) {
+    float h = hash12b(cid + 7.1), h2 = hash12b(cid + 3.3), h3 = hash12b(cid + 9.9);
+    per  = 13.0 + 6.0 * h;
+    age  = frac(t / per + h) * per;                  // 0 = it just landed
+    ctr  = (cid + 0.2 + 0.6 * float2(h2, h3)) * LAVA_C;
+    rmax = 0.9 + 1.3 * h3;
+}
+// the molten drops that make the puddles (lavaCover): each falls in the last 0.8 s before its cell's puddle lands - a
+// white-hot head, an orange body, a long glowing tail of heat above it
+float3 lavaDrops(float3 rd, float dist, float t) {
+    float3 L = 0;
+    float  gy = c5.y + pl.y;                                             // the ground: your feet
+    float2 ci = floor(c5.xz / LAVA_C);
+    [loop] for (int k = 0; k < 25; ++k) {
+        float2 cid = ci + float2(k % 5 - 2, k / 5 - 2), ctr; float age, per, rmax;
+        lavaCellLife(cid, t, ctr, age, per, rmax);
+        float tl = per - age;                                            // seconds until it lands
+        if (tl > 0.8) continue;
+        float u = 1.0 - tl / 0.8;                                        // 0 high up .. 1 landing
+        float3 head = float3(ctr.x, gy + 22.0 * (1.0 - u * u), ctr.y) - c5.xyz;
+        float3 tail = head + float3(0, 3.0 + 3.0 * u, 0);
+        float3 ab = tail - head;
+        float d1 = dot(rd, ab), d2 = dot(ab, ab), e1 = dot(rd, head), e2 = dot(ab, head);
+        float den = d2 - d1 * d1;
+        float uu = den > 1e-6 ? saturate((d1 * e1 - e2) / den) : 0.0;
+        float3 cp = head + ab * uu;
+        float tz = dot(cp, rd);
+        if (tz < 0.3 || tz > dist + 0.05) continue;
+        float dd = length(rd * tz - cp);
+        float w = lerp(0.16, 0.03, uu);
+        float3 cc = lerp(float3(1.0, 0.85, 0.5), float3(0.9, 0.18, 0.02), sqrt(uu));
+        L += cc * (exp(-pow(dd / w, 2.0)) * (2.5 - 2.0 * uu) + exp(-dd / (w * 4.0)) * 0.35 * (1.0 - uu));
+    }
+    return L;
+}
 float3 weather(float3 rd, float dist, float t, float night) {
     int   mode = int(wx0.x + 0.5);
     float lh   = length(rd.xz);
@@ -1115,12 +1151,12 @@ float3 weather(float3 rd, float dist, float t, float night) {
         float h2 = frac(h * 91.17 + 0.31);
         // (Purxiy reference, weather Fire: falling ember STREAKS - motion-blurred orange lines of mixed length with a hot
         //  head - plus faint sparks, not rising dots)
-        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : 3.2;
+        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : -0.5;
         float per = mode == 0 ? 9.0 : mode == 1 ? 5.0 : 7.0;
         float yy = y + t * sp * (0.85 + 0.3 * h2) + h * per;
         float ph = frac(yy / per) * per;                          // where in its drop period this ray is
-        float width = (mode == 0 ? 0.08 : mode == 1 ? 0.30 : 0.10) * wx0.w / (1.0 + float(k) * 0.4);
-        float len   = (mode == 0 ? 0.9 : mode == 1 ? 0.12 : 0.35 + 1.1 * h2 * h2) * wx0.w * (1.2 - 0.15 * float(k));
+        float width = (mode == 0 ? 0.08 : mode == 1 ? 0.30 : 0.05) * wx0.w / (1.0 + float(k) * 0.4);
+        float len   = (mode == 0 ? 0.9 : mode == 1 ? 0.12 : 0.07) * wx0.w * (1.2 - 0.15 * float(k));
         float across = exp(-pow(fu / width, 2.0)) * smoothstep(0.5, 0.36, abs(fu));   // zero at the column edge (no seams)
         float along  = mode == 0 ? smoothstep(0.0, 0.25, ph) * smoothstep(len, len * 0.6, ph)
                      : mode == 1 ? exp(-pow((ph - len) / max(len * 0.7, 0.02), 2.0))
@@ -1129,6 +1165,7 @@ float3 weather(float3 rd, float dist, float t, float night) {
         if (h2 > 0.55 * wx0.y + 0.15) { along = 0; head = 0; }       // not every column carries one
         float fade = 1.0 - float(k) * 0.18;
         [branch] if (mode == 2) {
+            if (k > 1) continue;                                       // (only a few fine sparks in the air now: the drops are the show)
             float fl = 0.75 + 0.25 * sin(t * 9.0 + h * 40.0);
             float3 ec = lerp(float3(0.85, 0.12, 0.02), float3(1.0, 0.55, 0.12), pow(saturate(1.0 - ph / len), 2.0));
             float  glow = exp(-pow(fu / (width * 3.5), 2.0)) * smoothstep(0.5, 0.3, abs(fu));
@@ -1144,6 +1181,7 @@ float3 weather(float3 rd, float dist, float t, float night) {
                               : float3(1.0, 0.42, 0.10) * (1.3 + 0.7 * sin(t * 7.0 + h * 40.0));
         L += cc * across * along * fade * (mode == 0 ? 0.30 : mode == 1 ? 0.75 : 1.1);
     }
+    [branch] if (mode == 2) L += lavaDrops(rd, dist, t);
     return L;
 }
 
@@ -1462,6 +1500,34 @@ float2 lavaCell(float2 p) {                                  // x = distance to 
     }
     return float2(d2 - d1, id);
 }
+// Living lava (Fernando: "it shouldn't just cut and put the lava somewhere else - drops should fall, splash onto the
+// ground and make a puddle, and it should fade out"). The ground is cut into 4-block cells; each cell runs its own
+// cycle: a molten drop falls (lavaDrops in weather()), lands, splashes, the puddle spreads out in ~1.5 s, glows, cools
+// darker and fades, then the cell waits for its next drop. Period 13-19 s, out of step from cell to cell.
+float lavaCover(float2 xz, float t, out float heat, out float splash) {
+    float2 ci = floor(xz / LAVA_C);
+    float cov = 0.0; heat = 0.0; splash = 0.0;
+    [unroll] for (int j = -1; j <= 1; ++j) [unroll] for (int i = -1; i <= 1; ++i) {
+        float2 cid = ci + float2(i, j), ctr; float age, per, rmax;
+        lavaCellLife(cid, t, ctr, age, per, rmax);
+        if (age > per - 2.6) continue;                                   // waiting for its next drop
+        float2 d2 = xz - ctr; float r = length(d2);
+        float R = rmax * (1.0 - exp(-age * 2.4));
+        float an = atan2(d2.y, d2.x);
+        float edge = R * (1.0 + 0.22 * (vnoise2(float2(an * 1.6, cid.x * 3.1 + cid.y) + 4.0) - 0.5) * 2.0 + 0.12 * sin(an * 5.0 + cid.y));
+        float alive = 1.0 - smoothstep(per - 5.0, per - 2.7, age);      // cools and fades
+        float c = smoothstep(edge + 0.05, edge - 0.08, r) * alive;
+        if (c > cov) { cov = c; heat = 1.0 - 0.75 * smoothstep(5.0, per - 3.0, age); }
+        // the splash: a bright ring of spatter thrown out as it lands
+        float ua = age / 0.45;
+        if (ua < 1.0) {
+            float Rs = 0.3 + 1.6 * rmax * (1.0 - pow(1.0 - ua, 2.0));
+            float sp = pow(saturate(cos(an * 13.0 + cid.x * 7.0)), 6.0);
+            splash = max(splash, (exp(-pow((r - Rs) / 0.10, 2.0)) * (0.5 + sp) + exp(-r * r / 0.2) * 0.8) * (1.0 - ua));
+        }
+    }
+    return cov;
+}
 float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
     // (Fernando 2026-11-19: v1 "super ugly, pale" - a regular turtle-shell web of big plates and thin veins. The
     //  reference is the other way round: the ground is mostly GLOWING orange magma, broken by small irregular black
@@ -1482,9 +1548,8 @@ float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
     // (round 4, the deep pass - full-res frames of video 2 at 11 s: inside each patch the lava is a connected WEB of
     //  thin bright orange veins, like a marbled crack network, over dark red-black cells that warm toward the veins;
     //  big irregular patches cover about half the street; between them the road is simply the road.)
-    float  big  = vnoise2(wp.xz * 0.30 + 4.0) * 0.6 + vnoise2(wp.xz * 0.85 + 9.0) * 0.4;
-    float  rag  = vnoise2(wp.xz * 3.2 + 2.0) * 0.6 + vnoise2(wp.xz * 7.5) * 0.4 - 0.5;
-    float  cover = smoothstep(0.47, 0.52, big + rag * 0.16);
+    float  lheat, lsplash;
+    float  cover = lavaCover(wp.xz, t, lheat, lsplash);
     float  aa = 0.003 * dist + 0.008;
     float  tf = t * 0.06;                                                // the web creeps
     float2 uv = wp.xz * 2.6;
@@ -1495,14 +1560,14 @@ float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
     float  r2 = abs(n2 - 0.5);
     float  vein  = 1.0 - smoothstep(0.012, 0.040 + aa, r1);
     float  vein2 = (1.0 - smoothstep(0.010, 0.030 + aa, r2)) * 0.6;     // finer veins between
-    float  heat = 0.80 + 0.20 * sin(t * 1.4 + vnoise2(wp.xz * 0.9 + t * 0.15) * 6.0);
+    float  heat = (0.80 + 0.20 * sin(t * 1.4 + vnoise2(wp.xz * 0.9 + t * 0.15) * 6.0)) * (0.35 + 0.65 * lheat);
     float  vv = max(vein, vein2);
     float3 cell = lerp(float3(0.035, 0.008, 0.005), float3(0.30, 0.04, 0.008), exp(-min(r1, r2 * 1.3) * 11.0) * 0.8);   // dark, warming to the veins
     float3 vc = lerp(float3(0.95, 0.30, 0.02), float3(1.0, 0.58, 0.16), pow(vv, 4.0));                                  // orange, a yellow core
     float3 lava = lerp(cell, vc * (1.2 + 0.6 * heat), vv) * (0.85 + 0.25 * heat);
     // the patch edge: the web frays out rather than ending on a clean line
-    float fray = smoothstep(0.40, 0.47, big + rag * 0.16) * (1.0 - cover);
-    float3 g = lerp(o, lava, cover) + vc * vein * fray * 0.9;
+    float3 cooled = lerp(cell * 0.6, lava, lheat);                          // a cooling puddle's veins dim to dull red
+    float3 g = lerp(o, cooled, cover) + float3(1.0, 0.55, 0.15) * lsplash * 1.4;
     return lerp(L, lerp(o, g, up), kd);
 }
 float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, float night) {
