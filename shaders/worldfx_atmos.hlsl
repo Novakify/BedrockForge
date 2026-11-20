@@ -478,7 +478,7 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                 // skin / armour texture still reads through) washes in the colour, thin bright rings run out over its
                 // surface from the blow, a glassy sheen slides down it, then it all eases out. Only pixels of that body:
                 // inside the tight box of the actor the blow landed on, never the ground, never what is behind it.
-                {
+                [branch] if (dot(dv, dv) < 6.0 && age < 0.62) {   // (perf audit: only pixels near the blow, only while it lives)
                     int   ai = -1; float bd = 1e9;
                     [loop] for (int j = 0; j < min(int(aInfo.x), 24); ++j) {      // the body the blow landed on
                         float3 dj = c - aPos[j].xyz;
@@ -1171,7 +1171,7 @@ float3 radiance(int2 p, float3 P, float zc) {
         float3 cc = aPos[i].xyz + float3(0, 0.1 + Hh * 0.5, 0);
         if (length(cc.xz) < 0.7 && cc.y > -2.2 && cc.y < 0.2) continue;   // you, from your own eyes
         float  tc = dot(cc, rdv);
-        if (tc < 0.5) continue;
+        if (tc < 0.5 || tc > 64.0) continue;   // (perf audit: no outline work past 64 blocks)
         float3 off = rdv * tc - cc;
         float  pxPerBlock = c4.y / max(tc, 0.5) * 0.9;                    // rough screen size of a block there
         float  reach = 18.0 * sc / pxPerBlock;                            // the glow's reach, in blocks
