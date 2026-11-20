@@ -405,7 +405,7 @@ void atmosTick() {
         auto* jc = r.find("jump_circles"); auto* hs = r.find("hit_splash"); auto* rp = r.find("ripple"); auto* sw = r.find("shockwave");
         if (jc && jc->enabled) { auto c = pal(jc, 0); out += std::format("jc 1\njc_c {:.3f} {:.3f} {:.3f}\njc_size {:.2f}\njc_dur {:.2f}\njc_glow {:.2f}\n", c[0], c[1], c[2], jc->num("size", 1.2f), jc->num("duration", 1.1f), jc->num("glow", 0.6f)); }
         else out += "jc 0\n";
-        if (hs && hs->enabled) { auto a = pal(hs, 0); auto b = pal(hs, 1); out += std::format("hs 1\nhs_a {:.3f} {:.3f} {:.3f}\nhs_b {:.3f} {:.3f} {:.3f}\nhs_size {:.2f}\nhs_dur {:.2f}\nhs_glow {:.2f}\n", a[0], a[1], a[2], b[0], b[1], b[2], hs->num("size", 1.f), hs->num("duration", 6.f), hs->num("glow", 0.7f)); }
+        if (hs && hs->enabled) { auto a = pal(hs, 0); auto b = pal(hs, 1); out += std::format("hs 1\nhs_a {:.3f} {:.3f} {:.3f}\nhs_b {:.3f} {:.3f} {:.3f}\nhs_size {:.2f}\nhs_dur {:.2f}\nhs_glow {:.2f}\n", a[0], a[1], a[2], b[0], b[1], b[2], hs->num("size", 1.f), hs->num("duration", 8.f), hs->num("glow", 0.8f)); out += std::format("hs_mode {}\n", int(hs->num("colour_mode", 1.f))); }
         else out += "hs 0\n";
         if (rp && rp->enabled) { auto c = pal(rp, 0); out += std::format("rp 1\nrp_c {:.3f} {:.3f} {:.3f}\nrp_glow {:.2f}\nrp_dur {:.2f}\nrp_crits {}\nrp_ring {}\n", c[0], c[1], c[2], rp->num("glow", 0.8f), rp->num("duration", 0.8f), rp->flag("crits", true) ? 1 : 0, rp->flag("ring", true) ? 1 : 0); }
         else out += "rp 0\n";
@@ -1449,7 +1449,8 @@ void registerBuiltins() {
             .slider("duration", "Duration (s)", 1.1f, 0.3f, 3.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
         auto& hs = r.add("hit_splash", "Hit Splash", Category::Visual, "Glowing splashes where your hits land (Renderer Foundation)", false);
         hs.choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
-            .slider("duration", "Duration (s)", 6.f, 1.f, 15.f, 0.5f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
+            .slider("duration", "Duration (s)", 8.f, 1.f, 20.f, 0.5f).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
+            .choice("colour_mode", "Colour mode", {"Single", "Gradient", "Neon mix", "Dark"}, 1);
         auto& rp = r.add("ripple", "Ripple", Category::Visual, "A wave of light where every hit lands (Renderer Foundation)", false);
         rp.choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
             .slider("duration", "Duration (s)", 0.8f, 0.3f, 2.f, 0.05f).toggleSetting("crits", "A burst of stars on critical hits", true)
