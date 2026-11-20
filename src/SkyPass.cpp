@@ -3251,7 +3251,8 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             }
             if (atm.wx) {
                 acb.wx[0][0] = atm.wxMode; acb.wx[0][1] = atm.wxIntensity; acb.wx[0][2] = atm.wxWind; acb.wx[0][3] = atm.wxSize;
-                acb.wx[1][0] = atm.wxRange; acb.wx[1][1] = (atm.wxMode < 0.5f || atm.wxMode > 1.5f) ? atm.wxWet : 0.f;   // rain: wet ground; fire: lava ground acb.wx[1][3] = 1.f;
+                acb.wx[1][0] = atm.wxRange; acb.wx[1][1] = (atm.wxMode < 0.5f || atm.wxMode > 1.5f) ? atm.wxWet : 0.f;   // rain: wet ground; fire: lava ground
+                acb.wx[1][3] = 1.f;   // (was stuck inside the comment above: the weather never drew in game - Fernando 2026-11-20 "only the sounds")
                 acb.wxL[3] = -1.f;
                 if (atm.wxLight && atm.wxStrike > 0 && atm.wxMode < 0.5f) {   // the strike time is Bedrock Forge's (wall clock): it plays the thunder
                     int64_t const wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -3373,6 +3374,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                         for (int k = 0; k < 48; ++k) if (gInkSeen[k] == e.atMs) { seen = true; break; }
                         if (seen) continue;
                         gInkSeen[gInkSeenN++ % 48] = e.atMs;
+                        // at most one splash a second (Fernando 2026-11-20: butterfly clicking made ~12 a second - massive lag)
+                        static int64_t lastInkAt = 0;
+                        if (e.atMs - lastInkAt < 1000) continue;
+                        lastInkAt = e.atMs;
                         InkPuddle& p = gInk[gInkNext++ % 24];
                         p.x = e.x; p.y = e.y; p.z = e.z; p.at = e.atMs;
                         p.seed = float((uint64_t(e.atMs) * 2654435761ull) % 1000ull) / 1000.0f;

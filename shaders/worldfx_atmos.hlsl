@@ -636,7 +636,13 @@ float3 ascension(float3 P, float3 rd, float dist, bool sky, float t, bool fp) {
     }
     if (fp) return L;   // from your own eyes: only its light on the ground (the shell would fill the screen)
     // the closest approach of the view ray to your axis (feet - 0.1 .. 3.3 above them)
-    float3 A = pl.xyz + float3(0, -0.1, 0), v = float3(0, 3.4, 0);
+    // (Fernando 2026-11-20, Hive: "the energy cuts off when trying to go beyond that box - make the radius bigger"
+    //  + a big dim gold wedge over the sky looking up at it.) The traced column now grows with the size (the crown at
+    //  size 2 reached 3.75 blocks and was cut at 3.5), its width covers the longest tongues, and a view ray running
+    //  nearly along the column (looking steeply up / down at it: the camera-facing plane degenerates and smeared the
+    //  flame over the whole sky) fades it out instead.
+    float  colH = 3.0 + 1.4 * S;
+    float3 A = pl.xyz + float3(0, -0.1, 0), v = float3(0, colH, 0);
     float  b = dot(rd, v), c = dot(v, v), d = dot(rd, -A), e = dot(v, -A);
     float  den = c - b * b;
     if (den < 1e-5) return L;
@@ -650,12 +656,15 @@ float3 ascension(float3 P, float3 rd, float dist, bool sky, float t, bool fp) {
     float3 right = cross(float3(0, 1, 0), rd);
     right = dot(right, right) > 1e-4 ? normalize(right) : float3(1, 0, 0);
     float  x  = dot(Pr - Q, right);                    // across (signed), in blocks
-    float  y  = hu * 3.4 - 0.1;                        // height above your feet (the crown fades out past the top)
+    float  y  = hu * colH - 0.1;                       // height above your feet (the crown fades out past the top)
     float  ax = abs(x);
-    if (ax > 1.6 * S + 0.4 || sc < 0.2) return L;      // nowhere near: done
+    float  bodyW = 0.30 + 0.26 * S;
+    if (ax > 3.2 * bodyW + 0.9 || sc < 0.2) return L;  // nowhere near: done
+    float  steep = smoothstep(0.80, 0.55, abs(rd.y));   // along the column: no flat smear
+    if (steep <= 0.0) return L;
     // depth: a wall in front hides it; your own body in front lets the front sheet of flame show (fainter)
     if (dist < sc - 1.2) return L;
-    float front = dist < sc - 0.25 ? 0.45 : 1.0;
+    float front = (dist < sc - 0.25 ? 0.45 : 1.0) * steep;
     // ---- the flame shell (tuned on an offline preview, 6 passes: no hairline rims, no hard bands, no box at the crown).
     //      f = how far inside the flame (in body widths, > 0 inside): the body's outline grown out, a dome tapering to
     //      a crown, its edge torn into tongues that stream upward (mirrored left / right: no seam down the middle)
@@ -1063,11 +1072,15 @@ float3 chroma(float3 c, float3 P, bool sky, float spareC) {
     float  wob = 0.55 * sin(wq.x * 1.7 + sin(wq.z * 1.3) * 1.5) + 0.45 * sin(wq.z * 2.3 + sin(wq.x * 0.9 + wq.y) * 1.2);
     [loop] for (int i = 0; i < n && k < 0.999; ++i) {               // chP.w = the fade (CPU), 1 fresh .. 0 forgotten
         float3 d = P - chP[i].xyz;
-        if (dot(d, d) > R2 || chP[i].w <= k) continue;               // too far, or cannot raise k
-        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0) + wob * 0.45 * ch1.x * 0.3;
-        float  e = smoothstep(ch1.x, ch1.x * 0.45, r);
-        rim = max(rim, chP[i].w * exp(-pow((r - ch1.x * 0.78) / (0.16 * ch1.x + 0.15), 2.0)) * (1.0 - e * 0.6));
-        k = max(k, chP[i].w * e);
+        if (dot(d, d) > R2 * 1.6) continue;                          // too far
+        // (Fernando 2026-11-20: "renders colours in chunks, not smoothly". Each trail point was its own hard-ish disc
+        //  and the max of them showed every disc. Now each point is a wide soft falloff and they merge as a smooth
+        //  union (1 - product of what is left), so the walked path is one continuous wash of colour.)
+        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0) + wob * 0.12 * ch1.x;
+        float  e = 1.0 - smoothstep(ch1.x * 0.15, ch1.x * 1.25, r);
+        e = e * e * (3.0 - 2.0 * e);
+        rim = max(rim, chP[i].w * exp(-pow((r - ch1.x * 1.0) / (0.35 * ch1.x + 0.3), 2.0)) * 0.5);
+        k = 1.0 - (1.0 - k) * (1.0 - chP[i].w * e);
     }
     float  lc   = lum3(c);
     float3 grey = (lc * lc * 0.25 + lc * 0.75) * ch0.rgb / max(lum3(ch0.rgb), 0.05);   // a touch deeper than flat grey
@@ -1075,21 +1088,80 @@ float3 chroma(float3 c, float3 P, bool sky, float spareC) {
     float3 col  = lerp(c, max(rich, 0.0), saturate(k) * 0.6);
     float3 o    = lerp(grey, col, saturate(k));
     float3 vivid = max(lerp(lc.xxx, c, 2.2), 0.0) * 1.15 + 0.02;                      // the spreading edge, saturated and lit
-    return lerp(o, vivid, saturate(rim) * 0.55);
+    return lerp(o, vivid, saturate(rim) * (1.0 - saturate(k)) * 0.35);   // a soft bloom of colour at the spreading edge only
+}
+// Radiance, round 3 (Fernando 2026-11-20: "v2 looks super ugly - it should look like a lighter version of our
+// Ascension aura, not as crazy but very similar, colour customisable, glow"). Every nearby player / mob wears a soft
+// flame aura in the Radiance colour: the Ascension shell (body outline grown out, tongues streaming up, a hot rim)
+// at about half the strength, no crown spikes or electricity, a few rising motes, a faint glow on the ground.
+float3 radFlame(float3 B, float Hh, float3 rd, float dist, float t, float3 col, float seed) {
+    float3 L = 0;
+    float  body = 0.24 + 0.14 * Hh;
+    float3 v = float3(0, Hh + 0.9, 0), A = B;
+    float  b = dot(rd, v), c = dot(v, v), d = dot(rd, -A), e = dot(v, -A);
+    float  den = c - b * b;
+    if (den < 1e-5) return L;
+    float  hu = (e - b * d) / den;
+    if (hu > 1.02 || hu < -0.03) return L;
+    float  h = saturate(hu);
+    float  sc = max(b * h - d, 0.0);
+    float3 Q = A + v * h, Pr = rd * sc;
+    float3 right = cross(float3(0, 1, 0), rd);
+    right = dot(right, right) > 1e-4 ? normalize(right) : float3(1, 0, 0);
+    float  x = dot(Pr - Q, right), ax = abs(x);
+    float  y = hu * (Hh + 0.9);
+    if (ax > body * 2.6 + 0.3 || sc < 0.3) return L;
+    float  steep = smoothstep(0.80, 0.55, abs(rd.y));
+    if (steep <= 0.0 || dist < sc - 1.0) return L;
+    float  front = (dist < sc - 0.2 ? 0.5 : 1.0) * steep;
+    float  spd = max(rad1.z, 0.2);
+    float  top = Hh + 0.55;
+    float  prof = y < Hh * 0.85 ? body * (0.85 + 0.15 * saturate((y + 0.1) / 0.8)) : body * pow(saturate((top - y) / (top - Hh * 0.85)), 0.8);
+    float  n1 = ascFbm(float2(ax * 2.4 + 3.0 + seed, y * 1.7 - t * 3.0 * spd));
+    float  up = saturate((y - 0.5) / 1.4);
+    float  R = (prof + body * (0.30 * (n1 - 0.5) + pow(saturate(n1 - 0.5), 1.5) * 0.9 * up)) * saturate((top + 0.2 - y) / 0.5);
+    float  f = (R - ax) / body;
+    float  lowF = saturate((y + 0.1) / 0.4) * smoothstep(top, top - 0.6, y);   // (no hairline point at the top)
+    if (f > -1.2) {
+        float streak = pow(saturate(ascFbm(float2(x * 6.0 + seed, y * 0.8 - t * 4.2 * spd)) * 1.4 - 0.35), 2.0);
+        float dens = pow(saturate((f + 0.10) / 0.5), 1.3) * (0.25 + 0.75 * streak);
+        float edge = exp(-pow((f - 0.02) / 0.15, 2.0));
+        float halo = f < 0.0 ? exp(f / 0.30) : 1.0;
+        float3 hot = lerp(col, float3(1, 1, 1), 0.55);
+        L += (col * (dens * 0.40 + edge * 0.40) + hot * edge * 0.30 + col * halo * 0.16 * (0.4 + rad1.x)) * lowF * front * (0.7 + 0.6 * rad1.x);
+    }
+    {   // a few motes rising through it
+        float2 m = float2(x, y + t * 0.9 * spd) * float2(5.0, 3.0);
+        float2 mi = floor(m + seed * 17.0), mf = frac(m) - 0.5;
+        float  hs = hash12b(mi);
+        if (hs > 0.90 && ax < body * 1.5 && y > 0.0 && y < top) {
+            float2 o = (float2(hash12b(mi + 3.1), hash12b(mi + 7.3)) - 0.5) * 0.6;
+            L += lerp(col, 1.0, 0.6) * exp(-dot(mf - o, mf - o) * 160.0) * smoothstep(top, top * 0.7, y) * 0.9 * front;
+        }
+    }
+    return L;
 }
 float3 radiance(int2 p, float3 P, float zc) {
-    // inside a player / mob / item box, where the depth behind jumps away: the silhouette
-    if (stillWorld(P) > 0.5) return 0;
-    float w = rad0.w;
-    float zN = 1e9;
-    [unroll] for (int k = 0; k < 4; ++k) {
-        int2 o = k == 0 ? int2(1, 0) : k == 1 ? int2(-1, 0) : k == 2 ? int2(0, 1) : int2(0, -1);
-        float zz = viewZ(rawDepth(p + o * int(w)));
-        zN = min(zN, zz > zc + 0.6 ? 0.0 : 1e9);
+    int n = min(int(aInfo.x), 24);
+    float3 rdv = normalize(P);
+    float  dist = length(P);
+    float3 L = 0;
+    float  t = c2.w;
+    [loop] for (int i = 0; i < n; ++i) {
+        float  Hh = clamp(fmod(aDim[i].w, 1000.0), 0.5, 3.0);
+        float3 B = aPos[i].xyz + float3(0, 0.1, 0);
+        float3 cc = B + float3(0, Hh * 0.5, 0);
+        if (length(cc.xz) < 0.7 && cc.y > -2.2 && cc.y < 0.2) continue;   // you, seen from your own eyes
+        float  tc = dot(cc, rdv);
+        if (tc < 0.3) continue;
+        float3 off = rdv * tc - cc;
+        if (dot(off, off) > (Hh * 0.5 + 1.4) * (Hh * 0.5 + 1.4)) continue;   // the ray passes nowhere near it
+        L += radFlame(B, Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37);
+        // its light on the ground round its feet
+        float3 g = P - B;
+        if (abs(g.y + 0.1) < 0.5) L += rad0.rgb * 0.18 * (0.4 + rad1.x) * exp(-dot(g.xz, g.xz) / 0.9) * smoothstep(0.5, 0.0, abs(g.y + 0.1));
     }
-    float edge = zN < 1.0 ? 1.0 : 0.0;
-    float flow = 0.6 + 0.4 * sin(c2.w * 2.0 * rad1.z + (P.x + P.y + P.z) * 3.0);
-    return rad0.rgb * (edge * (1.2 + rad1.x) * flow + rad1.y * 0.25);
+    return L;
 }
 // weather: drops / flakes / embers in 1.5-block cells along the view ray (a DDA like the ambience), depth-tested
 // weather (audit 2: the 3D cell walk cost 1.9 ms and still read as a few stray streaks): rain / snow / embers on
@@ -1190,9 +1262,14 @@ float3 weather(float3 rd, float dist, float t, float night) {
 // Now ~22 px at blur 0.5, and a nearer sample only counts if its own blur reaches this pixel (gather-as-scatter).
 float bokehCoc(float z, float zf, int mode, int2 p) {
     if (mode == 2) return smoothstep(bk0.z * 0.5, 0.5, abs(float(p.y) / c4.y - 0.55));   // tilt-shift: a sharp band across the screen
-    float rel = (z - zf) / max(zf, 0.5);
-    if (bk1.y < 0.5 && rel < 0.0) rel = 0.0;
-    return smoothstep(bk0.z * 0.6, bk0.z * 0.6 + 0.8, abs(rel));
+    // (Fernando 2026-11-20: "I don't even know what bokeh is trying to do, everything just looks blurry". With the
+    //  focus on a player 3 blocks away everything past ~4 blocks went fully blurry, and the focus jumped with the
+    //  crosshair.) Now: what you look at and everything near it stays sharp - at least the first 12 blocks, more with
+    //  "how much stays sharp" - and only the far background melts, gradually, into soft light; near blur is mild.
+    float zS = max(zf * (1.0 + 3.0 * bk0.z), 8.0 + 24.0 * bk0.z);
+    float far = smoothstep(zS, zS * 3.5, z);
+    float nearB = bk1.y > 0.5 ? smoothstep(zf * 0.45, zf * 0.15, z) * 0.6 : 0.0;
+    return max(far, nearB);
 }
 float3 bokeh(int2 p, float z, bool sky) {
     int mode = int(bk0.x + 0.5);
@@ -1678,7 +1755,7 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
         float3 ghost = acc * lumW * 0.55 + lumW * 0.06;          // what shows through: the clouds as faint accent ghosts, never their own hue
         c += ghost * 0.08;
         float ageS = abs(cy1.w) - 1.0;
-        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 0.65) * 5.0));   // the sky turns once the front has passed
+        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 5.0) / 2.5));   // the sky turns once the slow front has rolled out (Fernando: the take-over must be slow)
     }
     // (audit vs Purxiy: 1 px depth normals were noisy - blocks crawled with dots. Centred 3 px differences.)
     float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
@@ -1724,6 +1801,14 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
         dT = max(dT, -(length(q - float2(x1, y1)) - 0.055));                // the via is hollow: the trace stops at its ring
     }
     float circuits = max(1.0 - smoothstep(lw, lw + px1, dT), 1.0 - smoothstep(lw, lw + px1, dV)) * cy1.y;
+    // (round 4, Fernando: "looks way better but still kinda plain") detail between the traces: a faint quarter grid
+    // on every face, a few faces lit as glowing panels that breathe, and soft bands of light climbing the walls
+    float2 f4 = frac(uv * 4.0);
+    float  sub = (1.0 - smoothstep(0.5, 1.4, min(min(f4.x, 1.0 - f4.x), min(f4.y, 1.0 - f4.y)) / (aa.x * 4.0))) * far * 0.22;
+    float  h2p = cyHash(fid + 5.31);
+    float  panel = h2p < 0.06 ? (0.35 + 0.65 * pow(0.5 + 0.5 * sin(t * (1.2 + 3.0 * h2p) + h2p * 60.0), 3.0)) : 0.0;
+    panel *= smoothstep(0.0, 0.12, min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y))) * 0.30;   // inset from the edges
+    float  climb = an.y < 0.5 ? exp(-pow((frac(wp.y * 0.25 - t * 0.35 + h1 * 0.3) - 0.5) / 0.05, 2.0)) * 0.35 * far : 0.0;
     circuits *= smoothstep(0.08, 0.03, px1);                                // too far to resolve: leave the face plain
     // light packets: bright comets with short tails running along the block edges of the ground
     float packets = 0.0;
@@ -1749,6 +1834,7 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float3 base = acc * (0.012 + 0.06 * lumW) + lumW * 0.025;            // the world, near black (Purxiy: #1a1020-ish)
     float3 lc = lerp(acc, float3(1.0, 1.0, 1.0), 0.45);                    // white-hot line cores, the accent in the glow
     float3 lines = lc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.5) + acc * (edgeGlow * cy1.x + circuits * pulse * 0.65 * cy1.x + scan * 0.35)
+                 + acc * (sub + panel + climb) * cy1.x
                  + (float3(1.0, 1.0, 1.0) * 0.6 + acc) * packets * cy1.x;
     float3 dig = base + lines * fog + acc * scan * 0.12;
     // you become a hologram (Purxiy reference: the player goes dark with bright lavender scanlines drifting up)
@@ -1772,12 +1858,21 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
         return dig + float3(1.0, 0.1, 0.1) * eR * 1.2 + float3(0.1, 0.9, 1.0) * eB * 1.2;
     }
     if (age < 0.0) return L;
-    float R = age * 260.0;                                                // blocks: past the view in ~0.4 s
+    // (Fernando 2026-11-20: "the part where the world slowly goes cyber should be a lot slower") the front walks out
+    // from you and speeds up: ~3 blocks in the first half second, 25 by 1.5 s, the horizon by ~4 s. Behind it the world
+    // does not switch at once: for a block or two it is half real, half wireframe, flickering in cell by cell.
+    float R = 1.0 + 3.0 * age + 2.2 * age * age;   // ~16 blocks at 2 s, ~48 at 4 s, the horizon by ~7 s
     float d3 = length(P);
-    float inside = smoothstep(R + 1.5, R - 1.5, d3);
-    float frontW = exp(-pow((d3 - R) / (0.7 + 0.012 * R), 2.0)) * exp(-age * 2.5);
-    float3 o = lerp(L, dig, reality * inside);
-    return o + (float3(1.0, 0.98, 0.95) * 0.7 + acc * 1.1) * frontW * step(age, 1.5);
+    float band = 2.0 + 0.06 * R;                                          // the transition zone behind the front
+    float cellK = cyHash(floor(c5.xyz + P) + 0.37);                        // blocks flip one by one, not as a smooth wipe
+    float inside = saturate((R - d3) / band - cellK * 0.8 + 0.4);
+    inside = inside * inside * (3.0 - 2.0 * inside);
+    float flick = step(0.5, frac(t * 23.0 + cellK * 7.0)) * step(inside, 0.95) * step(0.05, inside);   // the flip flickers
+    inside = saturate(inside + flick * 0.35);
+    float frontW = exp(-pow((d3 - R) / (0.5 + 0.02 * R), 2.0)) * (1.0 - smoothstep(7.0, 9.0, age));
+    float wake = exp(-max(R - d3, 0.0) / (1.5 + 0.05 * R)) * step(d3, R) * (1.0 - smoothstep(7.0, 9.0, age));   // the lines glow hot just behind it
+    float3 o = lerp(L, dig + lines * fog * wake * 0.8, reality * inside);
+    return o + (float3(1.0, 0.98, 0.95) * 0.55 + acc * 1.2) * frontW;
 }
 
 // Cyberspace extras (round 3, from video 3 at 121.5-125 s): data packets - small glowing cubes flying in straight
@@ -2394,7 +2489,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     // audit: Radiance alone only writes its outlines (it cost 0.85 ms at 4K writing every pixel with nobody near)
     bool const post = ch0.w > -0.5 || wx1.w > 0.5 || bk0.w > 0.0 || cy0.w > 0.0 || cu1.w > 0.5;
     float3 radL = 0;
-    [branch] if (rad1.w > 0.5 && !sky && aInfo.x > 0.5) radL = radiance(int2(px), q, zc);   // outlines on players / mobs / items
+    [branch] if (rad1.w > 0.5 && aInfo.x > 0.5) radL = radiance(int2(px), q, zc);   // (the sky too: the aura spills over it)   // outlines on players / mobs / items
     if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post && dot(radL, 1.0) < 0.002 && overC.a < 0.002) discard;
     if (!drew) outL = col * trans + acc;
     outL = lerp(outL, overC.rgb, saturate(overC.a));
@@ -2403,7 +2498,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     [branch] if (cy0.w > 0.0) {
         float cyAge = abs(cy1.w) - 1.0;
         outL = cyberspace(outL, int2(px), q, rd, sky ? 1e4 : dist, sky, t);
-        if (cyAge > 0.45) outL += cyPackets(rd, sky ? 1e4 : dist, t) * smoothstep(0.45, 0.9, cyAge);
+        if (cyAge > 2.5) outL += cyPackets(rd, sky ? 1e4 : dist, t) * smoothstep(2.5, 6.0, cyAge);
         [branch] if (cyAge < 0.30) outL = cyIntro(outL, int2(px), cyAge);
     }
     [branch] if (cu1.w > 0.5) outL = cuteWorld(outL, q, rd, sky ? 1e4 : dist, sky, t);
