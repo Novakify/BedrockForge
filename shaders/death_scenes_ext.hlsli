@@ -499,7 +499,7 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         fnPoof(h, rd, feet + mul(RB, Pc) + float3(0, 0.15, 0), t - 3.4, seed, 16, 0.08);
     } else if (sc >= 82) {
         // ============ Bedrock Forge originals (2026-11-17, inspired by the Purxiy client's look - original code):
-        // 82 Shatter, 83 Light Pillar, 84 Constellation (Afterglow left out: too subtle). One light colour for the whole scene: the
+        // 82 Shatter, 83 Light Pillar, 84 Constellation, 85 Afterglow (Afterglow left out: too subtle). One light colour for the whole scene: the
         // kill's glow warmed toward white, so it reads at night and in any team colour.
         float3 lc = lerp(float3(1.0, 0.95, 0.86), glow, 0.45);
         float3x3 RB = rotY(yaw);
@@ -557,6 +557,31 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
             }
             dsBurst(h, rd, feet + float3(0, 0.2, 0), t - 0.5, 18, seed + 60.0, 0.35, 2.6, -1.2, 2.6, 0.026, lc, glow, -1e5, lc * 2.0);
             if (onG) { float2 gq = S.xz - feet.xz; add += cHalo * exp(-dot(gq, gq) / 0.18) * 0.45 * up * fade; }
+        } else if (sc == 85) {
+            // ============ AFTERGLOW (Fernando 2026-11-19, from his Purxiy clip): the one you killed dissolves from the
+            // head down - the edge flickers with white pixels - and every bit of them becomes a glowing orb (white core,
+            // magenta halo) that drifts up and hangs in the air, then fades
+            float T0 = 0.35, Dd = 1.0;
+            float cut = 1.0 - saturate((t - T0) / Dd);                       // how much of the body is left (from the feet)
+            fx.hurt = saturate(1.0 - t * 3.0);
+            if (cut > 0.001) dsBody(h, rd, feet, RB, 1.0, -99.0, 32.0 * cut, fx);
+            if (cut > 0.0 && cut < 1.0)                                       // the dissolving edge
+                dsBurst(h, rd, feet + float3(0, hb * cut, 0), frac(t * 7.0) * 0.2, 10, seed + floor(t * 7.0) * 3.1, 0.6, 0.5, -1.5, 0.2, 0.028,
+                        hex3(255, 255, 255), hex3(60, 40, 80), -1e5, float3(1.0, 0.85, 1.0) * 1.6);
+            float3 mag = lerp(lc, float3(1.0, 0.35, 1.0), 0.6), wht = float3(1.25, 1.2, 1.3);
+            [loop] for (int k = 0; k < 36; k++) {
+                float fk = float(k);
+                float hx = h1(seed + fk * 1.7), hy = h1(seed + fk * 2.9 + 0.3), hz = h1(seed + fk * 4.3 + 0.7);
+                float3 org = feet + mul(RB, float3((hx - 0.5) * 0.55, hy * hb, (hz - 0.5) * 0.3));
+                float  u = t - (T0 + (1.0 - hy) * Dd);
+                if (u < 0.0) continue;
+                float3 p = org + float3(sin(u * 1.3 + fk) * 0.18 * u + (hx - 0.5) * 0.9 * u, u * (0.45 + 0.55 * hz) * (1.0 - 0.15 * u), cos(u * 1.1 + fk * 2.0) * 0.18 * u + (hz - 0.5) * 0.9 * u);
+                float  life = 1.0 - smoothstep(2.2, 3.4, u);
+                float  tw = 0.8 + 0.2 * sin(t * 7.0 + fk * 2.3);
+                float  r = 0.045 + 0.035 * hx;
+                add += (wht * fnFlash(rd, p, r, h.t) * 3.0 + mag * fnFlash(rd, p, r * 2.2, h.t) * 1.1 + mag * fnFlash(rd, p, r * 5.0, h.t) * 0.10) * life * tw * smoothstep(0.0, 0.08, u);
+            }
+            fx.flash = 0.15 * exp(-pow((t - T0) / 0.1, 2.0));
         } else {
             // ============ CONSTELLATION: they fall back, and break into stars; the stars rise, find each other and
             // join into a constellation over the spot - it twinkles, then fades out
