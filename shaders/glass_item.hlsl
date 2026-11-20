@@ -224,5 +224,10 @@ float4 PSGlassItem(PSIn i) : SV_Target {
     lw = clamp(lw, 0.9 * S / max(pxPerTexel, 1e-3), 2.2 * S / max(pxPerTexel, 1e-3));
     float ln = 1.0 - smoothstep(lw - aa, lw + aa, dIn);
     c = lerp(c, edgeC * 1.2, ln);
-    return float4(saturate(c), 1.0);
+    // (Fernando 2026-11-20, Hive: items - generator gold / iron / diamond / emerald, small ones - flickered: the glass
+    //  reads the atlas texel by texel, so an item smaller than ~2 px a texel sparkles as it spins. There the glass fades
+    //  out and the game's own item - already drawn under it, mip-mapped - shows.)
+    float keep = smoothstep(1.4, 2.8, pxPerTexel);
+    if (keep < 0.02) discard;
+    return float4(saturate(c), keep);
 }
