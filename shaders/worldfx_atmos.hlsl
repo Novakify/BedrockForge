@@ -1867,89 +1867,210 @@ void kwSparkleEye(inout float3 c, float2 q, float s, float2 look, float lid) {
     c = lerp(c, ec, a);
     if (lid > 0.01) kwPaint(c, abs(q.y - (1.0 - lid) * 0.34 * s) + max(abs(q.x) - 0.24 * s, 0.0), 0.03, float3(0.06, 0.03, 0.10));
 }
-float3 kawaiiFace(float3 c, float2 f, int face, int react, float seed) {
-    float3 ink = float3(0.08, 0.03, 0.10), pink = float3(1.0, 0.45, 0.62), red = float3(0.55, 0.06, 0.12);
-    float  blushK = (face == 7 || react == 2) ? 0.85 : 0.5;
-    [unroll] for (int b = -1; b <= 1; b += 2) {                                       // blush + shine strokes
-        float2 bq = float2(f.x - float(b) * 0.62, f.y + 0.38) / float2(0.24, 0.12);
-        c = lerp(c, pink, exp(-dot(bq, bq)) * blushK);
+// ---- round 2 (Fernando's references: thick top lashes with a flick, layered irises, big highlights, striped blush,
+// spiral / blank panic eyes, waterfall tears, chibi rage with red marks, a pout with an anger mark). Original faces in
+// those anime styles - no characters.
+float kwTop(float x) { return 0.30 * sqrt(saturate(1.0 - (x / 0.23) * (x / 0.23))); }
+// an anime eye at q (eye units), side -1 left / +1 right (the outer corner), s scale, iris colour, lid 0 open .. 1 shut,
+// look: iris offset, star: a 4-point sparkle, tear: a wet glossy rim
+void animeEye(inout float3 c, float2 q, float side, float s, float3 irisC, float lid, float2 look, float star, float tear) {
+    q /= s;
+    float3 ink = float3(0.09, 0.03, 0.07);
+    float topY = lerp(0.30, -0.04, lid);
+    float r = length(q / float2(0.23, 0.30));
+    if (r < 1.0 && q.y < topY) {
+        float3 col = float3(0.98, 0.97, 1.0);
+        float2 iq = (q - look) / float2(0.175, 0.26);
+        float ir = length(iq);
+        if (ir < 1.0) {
+            float3 ic = lerp(irisC * 0.22, irisC, smoothstep(0.65, -0.25, iq.y));                       // dark at the top
+            ic = lerp(ic, lerp(irisC, float3(1.0, 1.0, 1.0), 0.5), smoothstep(-0.35, -0.85, iq.y) * smoothstep(1.0, 0.65, ir));   // light lower crescent
+            ic = lerp(ic, irisC * 0.12, smoothstep(0.82, 1.0, ir));                                   // dark rim
+            float pr = length((q - look - float2(0.0, 0.03)) / float2(0.075, 0.13));
+            ic = lerp(ic, float3(0.04, 0.02, 0.06), smoothstep(1.0, 0.8, pr));
+            col = ic;
+        }
+        float h1 = length(q - look - float2(-0.065, 0.10)) / 0.07, h2 = length(q - look - float2(0.07, -0.13)) / 0.032;
+        col = lerp(col, float3(1.0, 1.0, 1.0), max(smoothstep(1.0, 0.82, h1), smoothstep(1.0, 0.7, h2)));
+        if (star > 0.5) {
+            float2 sq = q - look - float2(0.035, -0.01);
+            float st = min(abs(sq.x) * 7.0 + abs(sq.y) * 1.3, abs(sq.y) * 7.0 + abs(sq.x) * 1.3);
+            col = lerp(col, float3(1.0, 0.88, 0.96), smoothstep(0.30, 0.18, st));
+        }
+        if (tear > 0.0) col = lerp(col, float3(0.78, 0.93, 1.0), tear * smoothstep(0.7, 0.97, r) * smoothstep(-0.05, -0.5, q.y));
+        c = lerp(c, col, smoothstep(1.0, 0.95, r));
+        if (q.y < 0.0) kwPaint(c, abs(r - 1.0) * 0.2, 0.010, ink * 1.4);                            // thin lower line
+    }
+    // the top lash: a thick band riding the lid, a flick at the outer corner, a fine crease above
+    float lx = clamp(q.x, -0.24, 0.24);
+    float ly = min(kwTop(lx), topY);
+    if (abs(q.x) < 0.25) kwPaint(c, abs(q.y - ly - 0.012) - 0.026 * (1.0 - 0.4 * abs(q.x) / 0.25), 0.01, ink);
+    float ey = min(kwTop(0.205), topY);
+    kwPaint(c, kwSeg(q, float2(side * 0.20, ey), float2(side * 0.33, ey + 0.08)) - 0.018, 0.008, ink);
+    if (lid < 0.3) kwPaint(c, abs(length((q - float2(0.0, -0.06)) / float2(0.27, 0.43)) - 1.0) * 0.27 + max(-q.y + 0.25, 0.0) * 9.0, 0.007, ink * 1.8);
+}
+void kwBrow(inout float3 c, float2 f, float tilt, float y) {          // tilt > 0: angry (inner end down), < 0: worried
+    [unroll] for (int e = -1; e <= 1; e += 2) {
+        float2 a = float2(float(e) * 0.70, y + tilt * 0.10), b = float2(float(e) * 0.18, y - tilt * 0.10);
+        kwPaint(c, kwSeg(f, a, b) - 0.02, 0.012, float3(0.09, 0.03, 0.07));
+    }
+}
+void kwBlush(inout float3 c, float2 f, float k, int style) {           // 0 strokes, 1 stripes, 2 white ticks
+    [unroll] for (int b = -1; b <= 1; b += 2) {
+        float2 bq = float2(f.x - float(b) * 0.55, f.y + 0.40) / float2(0.25, 0.13);
+        c = lerp(c, float3(1.0, 0.48, 0.60), exp(-dot(bq, bq) * 1.3) * k);
+        float2 lq = f - float2(float(b) * 0.55, -0.40);
+        if (style == 1 && abs(lq.x) < 0.17 && abs(lq.y) < 0.07) c = lerp(c, float3(0.85, 0.25, 0.35), 0.6 * step(0.5, frac(lq.y * 30.0)));
         [unroll] for (int l = 0; l < 3; ++l) {
-            float2 lq = float2(f.x - float(b) * 0.62 - (float(l) - 1.0) * 0.09, f.y + 0.38);
-            kwPaint(c, abs(lq.x + lq.y * 0.6) + max(abs(lq.y) - 0.06, 0.0), 0.02, float3(1.0, 0.85, 0.9));
+            float2 sq = lq - float2((float(l) - 1.0) * 0.08, 0.0);
+            if (style == 0) kwPaint(c, abs(sq.x + sq.y * 0.5) + max(abs(sq.y) - 0.055, 0.0), 0.016, float3(0.80, 0.25, 0.35));
+            if (style == 2 && l < 2) kwPaint(c, abs(sq.x + 0.04) + max(abs(sq.y) - 0.05, 0.0), 0.014, float3(1.0, 1.0, 1.0));
         }
     }
-    float2 L = float2(f.x - 0.42, f.y - 0.02), R = float2(f.x + 0.42, f.y - 0.02);   // the two eye spots
-    float2 m = float2(f.x, f.y + 0.55);                                              // the mouth spot
-    if (react == 1) {                                                                // STARTLED O_O
-        [unroll] for (int e = 0; e < 2; ++e) {
-            float2 q = e == 0 ? L : R;
-            kwPaint(c, length(q) - 0.26, 0.02, float3(1.0, 1.0, 1.0));
-            kwPaint(c, abs(length(q) - 0.26), 0.035, ink);
-            kwPaint(c, length(q) - 0.06, 0.02, ink);
+}
+void kwOpenMouth(inout float3 c, float2 m, float w, float h, float wob) {   // a big open mouth: dark inside, pink tongue
+    float an = atan2(m.y, m.x);
+    float d = length(m / float2(w, h)) - 1.0 + wob * sin(an * 9.0 + c2.w * 30.0) * 0.12;
+    if (d < 0.0) c = lerp(float3(0.30, 0.04, 0.08), float3(1.0, 0.55, 0.62), smoothstep(-0.25 * h, -0.55 * h, m.y));
+    kwPaint(c, abs(d) * min(w, h), 0.012, float3(0.09, 0.03, 0.07));
+}
+void kwTears(inout float3 c, float2 f, float t) {                      // waterfall tears
+    [unroll] for (int e = -1; e <= 1; e += 2) {
+        float x0 = float(e) * 0.42 + float(e) * 0.06;
+        float yy = f.y + 0.22;
+        if (yy > 0.0 || yy < -0.85) continue;
+        float x = x0 + 0.035 * sin(yy * 18.0 + t * 9.0);
+        float d = abs(f.x - x) - (0.055 + 0.02 * sin(yy * 30.0 - t * 14.0));
+        if (d < 0.0) c = lerp(float3(0.60, 0.82, 1.0), float3(0.95, 0.99, 1.0), smoothstep(-0.03, -0.0, d) * 0.0 + 0.5 + 0.5 * sin(yy * 40.0 - t * 20.0));
+        kwPaint(c, abs(d), 0.008, float3(0.35, 0.55, 0.85));
+    }
+}
+float3 kawaiiFace(float3 c, float2 f, int face, int react, float seed) {
+    float3 ink = float3(0.09, 0.03, 0.07);
+    float  t = c2.w;
+    float2 L = float2(f.x + 0.43, f.y + 0.02) / 1.35, R = float2(f.x - 0.43, f.y + 0.02) / 1.35;   // big anime eyes
+    float2 m = float2(f.x, f.y + 0.52) / 1.5;
+    int var = (face + react) & 1;
+    if (react == 1) {                                                   // STARTLED
+        kwBlush(c, f, 0.6, 0);
+        if (var == 0) {                                                 // spiral eyes, wobbly scream
+            [unroll] for (int e = 0; e < 2; ++e) {
+                float2 q = e == 0 ? L : R; float r = length(q);
+                if (r < 0.24) { float a = atan2(q.y, q.x) / 6.2831853; float sp = frac(r * 10.0 - a - t * 3.0); c = lerp(float3(1.0, 1.0, 1.0), ink, smoothstep(0.30, 0.18, abs(sp - 0.5))); }
+                kwPaint(c, abs(r - 0.24), 0.02, ink);
+            }
+            kwOpenMouth(c, m + float2(0.0, -0.02), 0.20, 0.13, 1.0);
+            [unroll] for (int s2 = -1; s2 <= 1; s2 += 2) { float2 w = f - float2(float(s2) * 0.88, 0.0); kwPaint(c, abs(w.x - 0.03 * sin(w.y * 40.0)) + max(abs(w.y) - 0.2, 0.0), 0.012, ink); }   // shake lines
+        } else {                                                        // blank white O_O, a sweat drop
+            [unroll] for (int e = 0; e < 2; ++e) { float2 q = e == 0 ? L : R; kwPaint(c, length(q) - 0.25, 0.02, float3(1.0, 1.0, 1.0)); kwPaint(c, abs(length(q) - 0.25), 0.022, ink); }
+            kwOpenMouth(c, m, 0.15, 0.11, 0.0);
+            float2 sd = f - float2(-0.80, 0.55);
+            kwPaint(c, length(sd / float2(1.0, 1.5)) - 0.08 + max(sd.y, 0.0) * 0.7, 0.012, float3(0.6, 0.85, 1.0));
         }
-        kwPaint(c, abs(length(m / float2(1.0, 1.3)) - 0.09), 0.03, ink);
-        float2 sd = f - float2(0.82, 0.62);                                           // a sweat drop
-        kwPaint(c, length(sd / float2(1.0, 1.5)) - 0.09 + max(sd.y, 0.0) * 0.6, 0.02, float3(0.55, 0.85, 1.0));
         return c;
     }
-    if (react == 3) {                                                                // MAD
-        kwPaint(c, kwSeg(f, float2(-0.70, 0.40), float2(-0.20, 0.26)), 0.05, ink);       // brows
-        kwPaint(c, kwSeg(f, float2(0.70, 0.40), float2(0.20, 0.26)), 0.05, ink);
-        kwPaint(c, min(kwSeg(L, float2(0.18, 0.10), float2(-0.12, -0.02)), kwSeg(L, float2(-0.12, -0.02), float2(0.18, -0.14))), 0.04, ink);   // > <
-        kwPaint(c, min(kwSeg(R, float2(-0.18, 0.10), float2(0.12, -0.02)), kwSeg(R, float2(0.12, -0.02), float2(-0.18, -0.14))), 0.04, ink);
-        kwPaint(c, kwArc(m, float2(0.0, -0.10), 0.14, 1.0), 0.03, ink);               // a frown
-        kwPaint(c, max(max(-(m.y + 0.0), m.y - 0.09), abs(m.x - 0.08) - 0.03 + m.y * 0.3), 0.01, float3(1.0, 1.0, 1.0));   // a fang
-        float2 am = f - float2(0.70, 0.70);                                           // anger mark
-        float  arm = min(min(kwArc(am, float2(0.08, 0.08), 0.07, -1.0), kwArc(am, float2(-0.08, 0.08), 0.07, -1.0)), min(kwArc(am, float2(0.08, -0.08), 0.07, 1.0), kwArc(am, float2(-0.08, -0.08), 0.07, 1.0)));
-        kwPaint(c, arm, 0.03, float3(0.9, 0.1, 0.15));
+    if (react == 2) {                                                   // SHY / TEARY
+        kwBlush(c, f, 0.9, 0);
+        kwBrow(c, f, -0.8, 0.46);
+        if (var == 0) {                                                 // trembling teary pout
+            animeEye(c, L, -1.0, 1.0, float3(0.20, 0.25, 0.55), 0.1, float2(0.0, -0.03), 0.0, 1.0);
+            animeEye(c, R,  1.0, 1.0, float3(0.20, 0.25, 0.55), 0.1, float2(0.0, -0.03), 0.0, 1.0);
+            kwPaint(c, kwArc(m, float2(0.0, -0.09), 0.10, 1.0), 0.016, ink);
+        } else {                                                        // waterfall crying
+            [unroll] for (int e = 0; e < 2; ++e) kwPaint(c, abs((e == 0 ? L : R).y + 0.02 * cos((e == 0 ? L : R).x * 14.0)) + max(abs((e == 0 ? L : R).x) - 0.22, 0.0), 0.04, ink);
+            kwTears(c, f, t);
+            kwPaint(c, abs(m.y - 0.03 * sin(m.x * 45.0)) + max(abs(m.x) - 0.15, 0.0), 0.016, ink);
+        }
         return c;
     }
-    if (react == 2) {                                                                // SHY: eyes aside, wavy mouth
-        kwSparkleEye(c, L, 0.9, float2(0.07, -0.05), 0.15);
-        kwSparkleEye(c, R, 0.9, float2(0.07, -0.05), 0.15);
-        kwPaint(c, abs(m.y - 0.025 * sin(m.x * 40.0)) + max(abs(m.x) - 0.13, 0.0), 0.022, ink);
+    if (react == 3) {                                                   // MAD
+        if (var == 0) {                                                 // chibi rage: white slits, a big jagged yell, red !! marks
+            [unroll] for (int e = -1; e <= 1; e += 2) {
+                float2 q = (e == -1 ? L : R) - float2(0.0, 0.02);
+                float2 qr = float2(q.x, q.y + float(e) * q.x * 0.35);
+                float d = max(abs(qr.y) - 0.09 * (1.0 - abs(qr.x) / 0.28), abs(qr.x) - 0.28);
+                if (d < 0.0) c = float3(1.0, 1.0, 1.0);
+                kwPaint(c, abs(d), 0.022, ink);
+            }
+            kwOpenMouth(c, m + float2(0.0, 0.03), 0.24, 0.17, 0.8);
+            [unroll] for (int k = 0; k < 4; ++k) {
+                float a = 0.5 + 0.7 * float(k) / 3.0; float2 dir = float2(cos(a * 3.14159), sin(a * 3.14159) * 0.6 + 0.5);
+                float2 p0 = float2((k < 2 ? -1.0 : 1.0) * 0.55, 0.62) + dir * 0.0;
+                float2 ax = normalize(float2((k < 2 ? -1.0 : 1.0) * (0.4 + 0.3 * float(k % 2)), 1.0));
+                float2 q = (f - p0) / 1.6; float al = dot(q, ax), ac = dot(q, float2(-ax.y, ax.x));
+                float pul = 1.0 + 0.15 * sin(t * 25.0);
+                kwPaint(c, max(abs(ac) - 0.045 * (al / 0.30) * pul, max(-al, al - 0.30 * pul)), 0.01, float3(0.95, 0.30, 0.38));
+            }
+        } else {                                                        // pout, anger mark, glare
+            kwBrow(c, f, 1.0, 0.46);
+            animeEye(c, L, -1.0, 0.95, float3(0.55, 0.15, 0.15), 0.35, float2(0.0, 0.0), 0.0, 0.0);
+            animeEye(c, R,  1.0, 0.95, float3(0.55, 0.15, 0.15), 0.35, float2(0.0, 0.0), 0.0, 0.0);
+            kwBlush(c, f, 0.6, 0);
+            kwPaint(c, min(kwArc(m - float2(0.0, 0.045), 0, 0.045, -1.0), kwArc(m - float2(0.0, -0.045), 0, 0.045, -1.0)) + max(m.x, -0.05) * 0.0 + (m.x < -0.01 ? 9.0 : 0.0), 0.016, ink);   // ε pout
+            float2 am = f - float2(0.68, 0.70);
+            float arm = min(min(kwArc(am, float2(0.08, 0.08), 0.07, -1.0), kwArc(am, float2(-0.08, 0.08), 0.07, -1.0)), min(kwArc(am, float2(0.08, -0.08), 0.07, 1.0), kwArc(am, float2(-0.08, -0.08), 0.07, 1.0)));
+            kwPaint(c, arm, 0.028, float3(0.92, 0.12, 0.2));
+        }
         return c;
     }
-    // the 12 resting faces
-    if (face == 0 || face == 8 || face == 11) {
-        kwSparkleEye(c, L, 1.0, 0, face == 11 ? 0.45 : 0.0);
-        kwSparkleEye(c, R, 1.0, 0, face == 11 ? 0.45 : 0.0);
-        if (face == 8) [unroll] for (int e = 0; e < 2; ++e) kwPaint(c, length((e == 0 ? L : R) - float2(0.0, -0.32)) - 0.05 * (1.0 + 0.2 * sin(seed * 9.0 + float(e))), 0.02, float3(0.6, 0.9, 1.0));   // teary
-    } else if (face == 1 || face == 7) {
-        float up = face == 1 ? 1.0 : -1.0;                                           // ^ ^  or  u u
-        kwPaint(c, kwArc(L, float2(0, -0.08 * up), 0.18, up), 0.045, ink);
-        kwPaint(c, kwArc(R, float2(0, -0.08 * up), 0.18, up), 0.045, ink);
-    } else if (face == 2) {                                                          // wink
-        kwSparkleEye(c, L, 1.0, 0, 0.0);
-        kwPaint(c, kwArc(R, float2(0, -0.08), 0.18, 1.0), 0.045, ink);
-    } else if (face == 3) {                                                          // > <
-        kwPaint(c, min(kwSeg(L, float2(0.18, 0.12), float2(-0.14, 0.0)), kwSeg(L, float2(-0.14, 0.0), float2(0.18, -0.12))), 0.045, ink);
-        kwPaint(c, min(kwSeg(R, float2(-0.18, 0.12), float2(0.14, 0.0)), kwSeg(R, float2(0.14, 0.0), float2(-0.18, -0.12))), 0.045, ink);
-    } else if (face == 4) {                                                          // heart eyes
-        kwPaint(c, kwHeart(L * 0.55), 0.02, float3(1.0, 0.2, 0.45)); kwPaint(c, kwHeart(R * 0.55), 0.02, float3(1.0, 0.2, 0.45));
+    // ---- the 12 resting faces
+    float3 irisCols[6] = { float3(0.25, 0.45, 0.95), float3(0.55, 0.30, 0.12), float3(0.85, 0.45, 0.10), float3(0.60, 0.12, 0.15), float3(0.18, 0.22, 0.60), float3(0.55, 0.25, 0.85) };
+    float3 ic = irisCols[face % 6];
+    if (face == 0) {        // gentle: soft smile
+        kwBlush(c, f, 0.75, 0); animeEye(c, L, -1.0, 1.0, ic, 0.12, 0, 1.0, 0.0); animeEye(c, R, 1.0, 1.0, ic, 0.12, 0, 1.0, 0.0);
+        kwPaint(c, kwArc(m, float2(0.0, 0.07), 0.09, -1.0), 0.013, ink);
+    } else if (face == 1) { // excited: star sparkle, big open mouth, white ticks
+        kwBlush(c, f, 0.6, 2); animeEye(c, L, -1.0, 1.05, ic, 0.0, 0, 1.0, 0.0); animeEye(c, R, 1.0, 1.05, ic, 0.0, 0, 1.0, 0.0);
+        kwBrow(c, f, -0.15, 0.50); kwOpenMouth(c, m + float2(0.0, 0.02), 0.20, 0.15, 0.0);
+    } else if (face == 2) { // happy tongue, striped blush
+        kwBlush(c, f, 0.7, 1); animeEye(c, L, -1.0, 1.0, ic, 0.0, float2(0.02, 0.0), 0.0, 0.0); animeEye(c, R, 1.0, 1.0, ic, 0.0, float2(-0.02, 0.0), 0.0, 0.0);
+        { float d = max(length(m / float2(0.13, 0.15)) - 1.0, m.y - 0.01); if (d < 0.0) c = float3(1.0, 0.55, 0.62); kwPaint(c, abs(d) * 0.13, 0.010, ink); }
+    } else if (face == 3) { // smug: half lids, brows in, little triangle mouth
+        kwBlush(c, f, 0.6, 0); kwBrow(c, f, 0.9, 0.42);
+        animeEye(c, L, -1.0, 1.0, ic, 0.38, 0, 0.0, 0.0); animeEye(c, R, 1.0, 1.0, ic, 0.38, 0, 0.0, 0.0);
+        { float2 tq = m - float2(0.0, -0.01); float d = max(max(-tq.y - 0.04, tq.y * 0.6 + abs(tq.x) - 0.05), 0.0) + max(max(-tq.y - 0.04, tq.y * 0.6 + abs(tq.x) - 0.05), -1.0) * 0.0;
+          float tri = max(-tq.y - 0.045, abs(tq.x) * 1.4 + tq.y - 0.05); if (tri < 0.0) c = float3(0.82, 0.30, 0.32); kwPaint(c, abs(tri), 0.008, ink); }
+    } else if (face == 4) { // hopeful teary
+        kwBlush(c, f, 0.7, 0); kwBrow(c, f, -0.7, 0.48);
+        animeEye(c, L, -1.0, 1.08, ic, 0.0, float2(0.0, 0.02), 1.0, 0.8); animeEye(c, R, 1.0, 1.08, ic, 0.0, float2(0.0, 0.02), 1.0, 0.8);
+        kwPaint(c, kwArc(m, float2(0.0, 0.04), 0.06, -1.0), 0.012, ink);
+    } else if (face == 5) { // ^^ + w
+        kwBlush(c, f, 0.75, 0);
+        kwPaint(c, kwArc(L, float2(0, -0.08), 0.17, 1.0), 0.035, ink); kwPaint(c, kwArc(R, float2(0, -0.08), 0.17, 1.0), 0.035, ink);
+        float ww = abs(abs(m.x) - 0.07); kwPaint(c, abs(m.y - (0.035 - ww * ww * 6.0)) + max(abs(m.x) - 0.15, 0.0), 0.018, ink);
+    } else if (face == 6) { // tsundere: shut eyes, pout, brows in
+        kwBlush(c, f, 0.85, 0); kwBrow(c, f, 0.6, 0.44);
+        [unroll] for (int e = -1; e <= 1; e += 2) { float2 q = e == -1 ? L : R; kwPaint(c, kwArc(q, float2(0, 0.10), 0.18, -1.0), 0.03, ink); kwPaint(c, kwSeg(q, float2(float(e) * 0.17, 0.0), float2(float(e) * 0.26, 0.05)), 0.02, ink); }
+        kwPaint(c, min(kwArc(m - float2(0.0, 0.045), 0, 0.045, -1.0), kwArc(m - float2(0.0, -0.045), 0, 0.045, -1.0)) + (m.x < -0.01 ? 9.0 : 0.0), 0.016, ink);
+    } else if (face == 7) { // heart eyes
+        kwBlush(c, f, 0.75, 1);
+        kwPaint(c, kwHeart(L * 0.55), 0.02, float3(1.0, 0.25, 0.5)); kwPaint(c, kwHeart(R * 0.55), 0.02, float3(1.0, 0.25, 0.5));
+        kwPaint(c, abs(kwHeart(L * 0.55)), 0.012, ink * 2.0); kwPaint(c, abs(kwHeart(R * 0.55)), 0.012, ink * 2.0);
         kwPaint(c, length(L * 0.55 - float2(-0.05, 0.08)) - 0.025, 0.01, float3(1.0, 1.0, 1.0)); kwPaint(c, length(R * 0.55 - float2(-0.05, 0.08)) - 0.025, 0.01, float3(1.0, 1.0, 1.0));
-    } else if (face == 5) {                                                          // star eyes
-        kwPaint(c, kwStar(L, 0.24), 0.02, float3(1.0, 0.82, 0.25)); kwPaint(c, kwStar(R, 0.24), 0.02, float3(1.0, 0.82, 0.25));
-        kwPaint(c, abs(kwStar(L, 0.24)), 0.02, ink); kwPaint(c, abs(kwStar(R, 0.24)), 0.02, ink);
-    } else if (face == 6) {                                                          // sleepy - -
-        kwPaint(c, kwSeg(L, float2(-0.18, -0.03), float2(0.18, -0.03)), 0.04, ink);
-        kwPaint(c, kwSeg(R, float2(-0.18, -0.03), float2(0.18, -0.03)), 0.04, ink);
-        float2 z = f - float2(0.72, 0.68);                                            // a little z
+        kwOpenMouth(c, m + float2(0.0, 0.02), 0.12, 0.09, 0.0);
+    } else if (face == 8) { // starry
+        kwBlush(c, f, 0.6, 2);
+        kwPaint(c, kwStar(L, 0.25), 0.02, float3(1.0, 0.85, 0.30)); kwPaint(c, kwStar(R, 0.25), 0.02, float3(1.0, 0.85, 0.30));
+        kwPaint(c, abs(kwStar(L, 0.25)), 0.015, ink); kwPaint(c, abs(kwStar(R, 0.25)), 0.015, ink);
+        kwOpenMouth(c, m + float2(0.0, 0.02), 0.17, 0.13, 0.0);
+    } else if (face == 9) { // sleepy
+        kwBlush(c, f, 0.6, 0);
+        animeEye(c, L, -1.0, 1.0, ic, 0.8, 0, 0.0, 0.0); animeEye(c, R, 1.0, 1.0, ic, 0.8, 0, 0.0, 0.0);
+        float2 z = f - float2(0.72, 0.68);
         kwPaint(c, min(min(kwSeg(z, float2(-0.07, 0.07), float2(0.07, 0.07)), kwSeg(z, float2(0.07, 0.07), float2(-0.07, -0.07))), kwSeg(z, float2(-0.07, -0.07), float2(0.07, -0.07))), 0.02, ink);
-    } else if (face == 9) {                                                          // dot eyes
-        kwPaint(c, length(L / float2(1.0, 1.4)) - 0.07, 0.02, ink); kwPaint(c, length(R / float2(1.0, 1.4)) - 0.07, 0.02, ink);
-    } else {                                                                         // OwO
-        [unroll] for (int e = 0; e < 2; ++e) { float2 q = e == 0 ? L : R; kwPaint(c, abs(length(q) - 0.17), 0.045, ink); kwPaint(c, length(q - float2(-0.05, 0.05)) - 0.04, 0.015, float3(1.0, 1.0, 1.0)); }
+        kwPaint(c, abs(length(m / float2(1.0, 1.25)) - 0.04), 0.014, ink);
+    } else if (face == 10) { // dot eyes :3
+        kwBlush(c, f, 0.8, 0);
+        kwPaint(c, length(L / float2(1.0, 1.4)) - 0.07, 0.015, ink); kwPaint(c, length(R / float2(1.0, 1.4)) - 0.07, 0.015, ink);
+        kwPaint(c, length(L - float2(-0.02, 0.04)) - 0.02, 0.008, float3(1.0, 1.0, 1.0)); kwPaint(c, length(R - float2(-0.02, 0.04)) - 0.02, 0.008, float3(1.0, 1.0, 1.0));
+        kwPaint(c, min(kwArc(m - float2(-0.05, 0.0), 0, 0.05, -1.0), kwArc(m - float2(0.05, 0.0), 0, 0.05, -1.0)), 0.018, ink);
+    } else {                // wink + tongue
+        kwBlush(c, f, 0.75, 1);
+        animeEye(c, L, -1.0, 1.0, ic, 0.0, 0, 1.0, 0.0);
+        kwPaint(c, kwArc(R, float2(0, -0.06), 0.17, 1.0), 0.03, ink);
+        kwPaint(c, kwArc(m, float2(0, 0.06), 0.11, -1.0), 0.016, ink);
+        { float2 tq = m - float2(0.05, -0.07); float d = length(tq / float2(1.0, 1.2)) - 0.055; if (d < 0.0 && tq.y < 0.04) c = float3(1.0, 0.50, 0.58); }
     }
-    // mouths
-    float ww = abs(abs(m.x) - 0.07);
-    if (face == 0 || face == 7 || face == 10)       kwPaint(c, abs(m.y - (0.035 - ww * ww * 6.0)) + max(abs(m.x) - 0.15, 0.0), 0.022, ink);   // w
-    else if (face == 1 || face == 5)                { float d = max(length(m / float2(1.0, 0.8)) - 0.14, m.y); kwPaint(c, d, 0.02, red); kwPaint(c, abs(d), 0.025, ink); }  // D
-    else if (face == 2)                             { kwPaint(c, kwArc(m, float2(0, 0.06), 0.11, -1.0), 0.025, ink); kwPaint(c, length((m - float2(0.04, -0.07)) / float2(1.0, 1.2)) - 0.05, 0.015, float3(1.0, 0.45, 0.55)); }   // tongue
-    else if (face == 3 || face == 6)                kwPaint(c, abs(length(m / float2(1.0, 1.2)) - 0.05), 0.025, ink);                         // o
-    else if (face == 9)                             kwPaint(c, min(kwArc(m - float2(-0.05, 0.0), 0, 0.05, -1.0), kwArc(m - float2(0.05, 0.0), 0, 0.05, -1.0)), 0.022, ink);   // :3
-    else if (face == 11)                            kwPaint(c, kwSeg(m, float2(-0.10, -0.01), float2(0.12, 0.04)), 0.025, ink);                // smirk
-    else                                            kwPaint(c, kwArc(m, float2(0, 0.08), 0.12, -1.0), 0.025, ink);                             // smile
     return c;
 }
 float3 cuteEyes(float3 o, float3 P) {
