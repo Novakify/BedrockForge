@@ -812,7 +812,7 @@ uint32_t         gBlurActorsFrame = 0;
 extern "C" __declspec(dllexport) BfBlurActorsV1 const* BF_GetBlurActors() { return &gBlurActors[gBlurActorsCur.load(std::memory_order_acquire)]; }
 namespace bedrock_forge::client::matchfx {
 std::atomic<int64_t> gTickMs{0};   // the last client level tick (for the frame's interpolation alpha)
-void blurActorsFrame(LocalPlayer& lp, bool cuteOn) {
+void blurActorsFrame(LocalPlayer& lp, bool cuteOn, bool keepStill) {
     int const w = gBlurActorsCur.load(std::memory_order_relaxed) ^ 1;
     BfBlurActorsV1& o = gBlurActors[w];
     o.count = 0; o.size = sizeof o; o.version = 1; o.frame = ++gBlurActorsFrame;
@@ -825,7 +825,7 @@ void blurActorsFrame(LocalPlayer& lp, bool cuteOn) {
                 if (player != (pass == 0)) continue;
                 float dx = 0, dy = 0, dz = 0;
                 try { auto const d = a->getPosDelta(); dx = d.x; dy = d.y; dz = d.z; } catch (...) {}
-                if (!player && !cuteOn && dx * dx + dy * dy + dz * dz < 0.004f * 0.004f) continue;   // it stands still: part of the world, it blurs with it
+                if (!player && !cuteOn && !keepStill && dx * dx + dy * dy + dz * dz < 0.004f * 0.004f) continue;   // (Radiance / Ripple / Bokeh want still mobs too)   // it stands still: part of the world, it blurs with it
                 auto const& bb = a->getAABB();
                 // (Fernando 2026-11-20: "cute faces glitching in match and flickering") the box is the TICK position -
                 // up to a tick (50 ms: a sprint-strafe or a knockback, 0.3+ blocks) away from where the body is drawn, so
