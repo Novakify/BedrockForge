@@ -488,8 +488,8 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                     }
                     float  hB = ai >= 0 ? clamp(fmod(aDim[ai].w, 1000.0), 0.5, 3.0) : 1.8;
                     float3 db = ai >= 0 ? P - aPos[ai].xyz : dv + float3(0, 1.3, 0);
-                    float  rB = ai >= 0 && bd < 1.0 ? 0.50 : 0.45;
-                    bool   onBody = length(db.xz) < rB && db.y > 0.16 && db.y < hB + 0.38 && (ai < 0 || bd < 1.0);
+                    float  rB = ai >= 0 && bd < 1.0 ? aPos[ai].w - (aDim[ai].w > 999.0 ? 0.45 : 0.2) + 0.16 : 0.45;
+                    bool   onBody = max(abs(db.x), abs(db.z)) < rB && db.y > 0.16 && db.y < hB + 0.38 && (ai < 0 || bd < 1.0);
                     float  lifeR = 0.62;
                     if (onBody && age < lifeR) {
                         float  u = age / lifeR;
@@ -1099,9 +1099,9 @@ float3 chroma(float3 c, float3 P, bool sky, float spareC) {
 // Ascension aura, not as crazy but very similar, colour customisable, glow"). Every nearby player / mob wears a soft
 // flame aura in the Radiance colour: the Ascension shell (body outline grown out, tongues streaming up, a hot rim)
 // at about half the strength, no crown spikes or electricity, a few rising motes, a faint glow on the ground.
-float3 radFlame(float3 B, float Hh, float3 rd, float dist, float t, float3 col, float seed) {
+float3 radFlame(float3 B, float Hh, float3 rd, float dist, float t, float3 col, float seed, float hw) {
     float3 L = 0;
-    float  body = 0.24 + 0.14 * Hh;
+    float  body = max(0.24 + 0.14 * Hh, hw * 1.15);   // (mobs: as wide as they are - a pig is wider than it is tall)
     float3 v = float3(0, Hh + 0.9, 0), A = B;
     float  b = dot(rd, v), c = dot(v, v), d = dot(rd, -A), e = dot(v, -A);
     float  den = c - b * b;
@@ -1156,8 +1156,9 @@ float radIn(int2 q, int ai, float zMax) {   // 1 if pixel q is on actor ai and n
     float3 w = posAt(q);
     if (dot(w, w) > zMax * zMax) return 0.0;
     float3 dd = w - aPos[ai].xyz;
-    float  hh = clamp(fmod(aDim[ai].w, 1000.0), 0.5, 3.0);
-    return (dd.y > 0.13 && dd.y < hh + 0.4 && length(dd.xz) < 0.55) ? 1.0 : 0.0;
+    float  hh = clamp(fmod(aDim[ai].w, 1000.0), 0.3, 3.0);
+    float  hw = aPos[ai].w - (aDim[ai].w > 999.0 ? 0.45 : 0.2) + 0.14;   // the real half width (+ armour / limbs)
+    return (dd.y > 0.13 && dd.y < hh + 0.35 && max(abs(dd.x), abs(dd.z)) < hw) ? 1.0 : 0.0;   // its box, like the game's
 }
 float3 radiance(int2 p, float3 P, float zc) {
     int n = min(int(aInfo.x), 24);
@@ -1185,7 +1186,8 @@ float3 radiance(int2 p, float3 P, float zc) {
         //  the colour through the body of the flame, fading at the tips. Smooth everywhere.
         // the fire itself: the smooth Ascension-style flame shell, rising tongues (analytic - no pixel steps)
         bool onB = radIn(p, i, dist + 0.01) > 0.5;
-        L += radFlame(aPos[i].xyz + float3(0, 0.1, 0), Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37) * (1.1 + 0.6 * rad1.x) * (onB ? 0.25 : 1.0);
+        float hwI = aPos[i].w - (aDim[i].w > 999.0 ? 0.45 : 0.2);
+        L += radFlame(aPos[i].xyz + float3(0, 0.1, 0), Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37, hwI) * (1.1 + 0.6 * rad1.x) * (onB ? 0.25 : 1.0);
         // and where the fire meets the body: a white-hot rim hugging the real silhouette (fine rings, a few px)
         if (onB) continue;
         float dmin = 1e3;
