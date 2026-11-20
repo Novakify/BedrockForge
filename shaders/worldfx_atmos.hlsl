@@ -1063,11 +1063,15 @@ float3 chroma(float3 c, float3 P, bool sky, float spareC) {
     float  wob = 0.55 * sin(wq.x * 1.7 + sin(wq.z * 1.3) * 1.5) + 0.45 * sin(wq.z * 2.3 + sin(wq.x * 0.9 + wq.y) * 1.2);
     [loop] for (int i = 0; i < n && k < 0.999; ++i) {               // chP.w = the fade (CPU), 1 fresh .. 0 forgotten
         float3 d = P - chP[i].xyz;
-        if (dot(d, d) > R2 || chP[i].w <= k) continue;               // too far, or cannot raise k
-        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0) + wob * 0.45 * ch1.x * 0.3;
-        float  e = smoothstep(ch1.x, ch1.x * 0.45, r);
-        rim = max(rim, chP[i].w * exp(-pow((r - ch1.x * 0.78) / (0.16 * ch1.x + 0.15), 2.0)) * (1.0 - e * 0.6));
-        k = max(k, chP[i].w * e);
+        if (dot(d, d) > R2 * 1.6) continue;                          // too far
+        // (Fernando 2026-11-20: "renders colours in chunks, not smoothly". Each trail point was its own hard-ish disc
+        //  and the max of them showed every disc. Now each point is a wide soft falloff and they merge as a smooth
+        //  union (1 - product of what is left), so the walked path is one continuous wash of colour.)
+        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0) + wob * 0.12 * ch1.x;
+        float  e = 1.0 - smoothstep(ch1.x * 0.15, ch1.x * 1.25, r);
+        e = e * e * (3.0 - 2.0 * e);
+        rim = max(rim, chP[i].w * exp(-pow((r - ch1.x * 1.0) / (0.35 * ch1.x + 0.3), 2.0)) * 0.5);
+        k = 1.0 - (1.0 - k) * (1.0 - chP[i].w * e);
     }
     float  lc   = lum3(c);
     float3 grey = (lc * lc * 0.25 + lc * 0.75) * ch0.rgb / max(lum3(ch0.rgb), 0.05);   // a touch deeper than flat grey
@@ -1075,7 +1079,7 @@ float3 chroma(float3 c, float3 P, bool sky, float spareC) {
     float3 col  = lerp(c, max(rich, 0.0), saturate(k) * 0.6);
     float3 o    = lerp(grey, col, saturate(k));
     float3 vivid = max(lerp(lc.xxx, c, 2.2), 0.0) * 1.15 + 0.02;                      // the spreading edge, saturated and lit
-    return lerp(o, vivid, saturate(rim) * 0.55);
+    return lerp(o, vivid, saturate(rim) * (1.0 - saturate(k)) * 0.35);   // a soft bloom of colour at the spreading edge only
 }
 // Radiance, round 2 (Fernando 2026-11-20: "barely works, undetailed, ugly"). Was: a 1-colour line on the body's own
 // edge pixels. Now an aura AROUND the body: a crisp bright line on the silhouette, a soft glow that spills outward over
