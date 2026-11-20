@@ -3374,6 +3374,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                         for (int k = 0; k < 48; ++k) if (gInkSeen[k] == e.atMs) { seen = true; break; }
                         if (seen) continue;
                         gInkSeen[gInkSeenN++ % 48] = e.atMs;
+                        // at most one splash a second (Fernando 2026-11-20: butterfly clicking made ~12 a second - massive lag)
+                        static int64_t lastInkAt = 0;
+                        if (e.atMs - lastInkAt < 1000) continue;
+                        lastInkAt = e.atMs;
                         InkPuddle& p = gInk[gInkNext++ % 24];
                         p.x = e.x; p.y = e.y; p.z = e.z; p.at = e.atMs;
                         p.seed = float((uint64_t(e.atMs) * 2654435761ull) % 1000ull) / 1000.0f;
