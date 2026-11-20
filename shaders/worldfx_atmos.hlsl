@@ -1157,7 +1157,7 @@ float radIn(int2 q, int ai, float zMax) {   // 1 if pixel q is on actor ai and n
     if (dot(w, w) > zMax * zMax) return 0.0;
     float3 dd = w - aPos[ai].xyz;
     float  hh = clamp(fmod(aDim[ai].w, 1000.0), 0.5, 3.0);
-    return (dd.y > 0.2 && dd.y < hh + 0.4 && length(dd.xz) < 0.55) ? 1.0 : 0.0;
+    return (dd.y > 0.13 && dd.y < hh + 0.4 && length(dd.xz) < 0.55) ? 1.0 : 0.0;
 }
 float3 radiance(int2 p, float3 P, float zc) {
     int n = min(int(aInfo.x), 24);
@@ -1176,27 +1176,27 @@ float3 radiance(int2 p, float3 P, float zc) {
         float  pxPerBlock = c4.y / max(tc, 0.5) * 0.9;                    // rough screen size of a block there
         float  reach = 18.0 * sc / pxPerBlock;                            // the glow's reach, in blocks
         if (abs(off.y) > Hh * 0.5 + 0.4 + reach || length(off.xz) > 0.55 + reach) continue;
-        bool   on = radIn(p, i, dist + 0.01) > 0.5;
-        float  edge = 0.0, glow = 0.0;
+        // (round 5, Fernando: "half-ass version of theirs, plain and dull, not glowy". Their clip, close up: a thick
+        //  near-white line hugging the outside of the silhouette, then a lilac glow fading out ~20 px - and the body
+        //  itself untouched.) Outside the body: the distance (in px) to the nearest body pixel, searched on 12 rays x
+        //  6 rings; a hot core where it is ~0-4 px, the colour glow falling off past it.
+        if (radIn(p, i, dist + 0.01) > 0.5) continue;
+        float dmin = 99.0;
         [unroll] for (int k = 0; k < 12; ++k) {
-            float a = float(k) * 0.5235988;
+            float a = float(k) * 0.5235988 + 0.26;
             float2 dir = float2(cos(a), sin(a));
-            if (on) {
-                edge = max(edge, 1.0 - radIn(p + int2(dir * 1.8 * sc), i, 1e4));
-            } else {
-                float g = 0.0;
-                g = max(g, radIn(p + int2(dir * 2.5 * sc), i, dist - 0.4) * 1.0);
-                g = max(g, radIn(p + int2(dir * 7.0 * sc), i, dist - 0.4) * 0.55);
-                g = max(g, radIn(p + int2(dir * 13.0 * sc), i, dist - 0.4) * 0.25);
-                glow += g;
+            [unroll] for (int r = 0; r < 8; ++r) {
+                float rr = r == 0 ? 1.0 : r == 1 ? 2.0 : r == 2 ? 3.2 : r == 3 ? 4.8 : r == 4 ? 7.0 : r == 5 ? 10.0 : r == 6 ? 14.0 : 19.0;
+                if (rr >= dmin) break;
+                if (radIn(p + int2(dir * rr * sc), i, dist - 0.15) > 0.5) { dmin = rr; break; }
             }
         }
-        glow /= 6.0;                                                      // a smooth falloff (and stronger in corners)
-        float3 col = rad0.rgb, hot = lerp(rad0.rgb, float3(1, 1, 1), 0.55);
-        float  shimmer = 0.85 + 0.15 * sin(t * 2.5 * max(rad1.z, 0.2) + (P.y + c5.y) * 3.0);
-        L += (hot * edge * (1.6 + rad1.x) + col * saturate(glow * 1.3) * (1.0 + 1.3 * rad1.x)) * shimmer;
-        if (on) L += col * (0.10 + 0.25 * rad1.y);                         // the body faintly lit
-        L += radFlame(aPos[i].xyz + float3(0, 0.1, 0), Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37) * 0.35;   // soft licks
+        if (dmin > 90.0) continue;
+        float3 col = rad0.rgb, hot = lerp(rad0.rgb, float3(1, 1, 1), 0.78);
+        float  pulse = 0.9 + 0.1 * sin(t * 2.2 * max(rad1.z, 0.2) + float(i));
+        float  core = exp(-pow(dmin / 4.4, 2.0));
+        float  glow = exp(-dmin / 10.0);
+        L += (hot * core * (2.2 + 1.2 * rad1.x) + col * glow * (1.8 + 2.0 * rad1.x)) * pulse;
     }
     return L;
 }
