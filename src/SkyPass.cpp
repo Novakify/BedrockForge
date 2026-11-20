@@ -91,7 +91,13 @@ std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one 
 std::atomic<bool> gSkySinceClear{false}, gFxSinceClear{false};
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
-std::atomic<bool> gBlurOnly{false};  // no World FX sky, but motion blur is asked for: the pass runs for the blur alone (any sky: vanilla, LyricsForge)
+std::atomic<bool> gBlurOnly{false};
+// [Purxiy] Gold Ink puddles (Fernando 2026-11-19: "every hit adds a puddle that stays a while, different colours,
+// stacking where you keep hitting - a trail of ink after a fight"). RF keeps its own list of puddles (the event ring
+// is shared with jumps and swings and forgets them in a second or two): one per hit, up to 24, each with its seed.
+struct InkPuddle { double x = 0, y = 0, z = 0; int64_t at = 0; float seed = 0, dx = 1, dz = 0; };
+static InkPuddle gInk[24]; static int gInkNext = 0; static int64_t gInkSeen[48]{}; static int gInkSeenN = 0;
+static bool inkAlive(int64_t nowMs, float life) { for (auto const& p : gInk) if (p.at > 0 && float(nowMs - p.at) < life * 1000.f) return true; return false; }  // no World FX sky, but motion blur is asked for: the pass runs for the blur alone (any sky: vanilla, LyricsForge)
 
 // Haze + Mist (shaders/worldfx_atmos.hlsl): config/Atmos.txt, written by the Bedrock Forge client's Haze / Mist modules,
 // read again about once a second. Any sky: with no World FX look the pass runs for them alone (like the motion blur).
@@ -105,7 +111,7 @@ struct AtmosSet {
     // hit / jump effects (events from Bedrock Forge)
     bool  jc = false, hs = false, rp = false, sw = false, rpRing = true, rpCrits = true;
     float jcC[3]{0.78f, 0.42f, 1.0f}, jcSize = 1.2f, jcDur = 1.1f, jcGlow = 0.6f;
-    float hsA[3]{0.78f, 0.42f, 1.0f}, hsB[3]{0.95f, 0.92f, 1.0f}, hsSize = 1.0f, hsDur = 6.0f, hsGlow = 0.7f;
+    float hsA[3]{0.78f, 0.42f, 1.0f}, hsB[3]{0.95f, 0.92f, 1.0f}, hsSize = 1.0f, hsDur = 8.0f, hsGlow = 0.8f; float hsMode = 1.f;
     float rpC[3]{0.78f, 0.42f, 1.0f}, rpGlow = 0.8f, rpDur = 0.8f;
     float swC[3]{0.78f, 0.42f, 1.0f}, swSize = 1.0f, swGlow = 0.7f;
     bool  events() const { return jc || hs || rp || sw || pa; }
@@ -130,7 +136,7 @@ struct AtmosSet {
     float bkMode = 0.0f, bkDist = 24.0f, bkBand = 0.26f, bkBlur = 0.5f, bkHi = 0.6f, bkFringe = 0.45f;
     bool  cy = false, cySky = true, cu = false;   // [Purxiy] Cyberspace / Cute World
     float cyC[3]{0.2f, 0.9f, 1.0f}, cyReality = 0.85f, cyGlow = 1.0f, cyCircuits = 1.0f, cyScan = 6.0f;
-    float cuC[3]{1.0f, 0.55f, 0.75f}, cuSoft = 0.7f, cuHearts = 1.0f, cuSparkle = 1.0f, cuPastel = 1.0f;
+    float cuC[3]{1.0f, 0.55f, 0.75f}, cuSoft = 0.7f, cuHearts = 1.0f, cuSparkle = 1.0f, cuPastel = 1.0f; bool cuEyes = true;
     bool  post() const { return chroma || rad || wx || bk || cy || cu; }
     bool  pa = false, paBreak = true;
     float paC[3]{0.78f, 0.42f, 1.0f}, paDur = 0.34f, paGlow = 0.6f;
@@ -200,7 +206,7 @@ void pollAtmos() {
         else if (k == "jc") { int v = 0; in >> v; a.jc = v != 0; } else if (k == "jc_c") rd3(a.jcC);
         else if (k == "jc_size") rd(a.jcSize); else if (k == "jc_dur") rd(a.jcDur); else if (k == "jc_glow") rd(a.jcGlow);
         else if (k == "hs") { int v = 0; in >> v; a.hs = v != 0; } else if (k == "hs_a") rd3(a.hsA); else if (k == "hs_b") rd3(a.hsB);
-        else if (k == "hs_size") rd(a.hsSize); else if (k == "hs_dur") rd(a.hsDur); else if (k == "hs_glow") rd(a.hsGlow);
+        else if (k == "hs_mode") rd(a.hsMode); else if (k == "hs_size") rd(a.hsSize); else if (k == "hs_dur") rd(a.hsDur); else if (k == "hs_glow") rd(a.hsGlow);
         else if (k == "rp") { int v = 0; in >> v; a.rp = v != 0; } else if (k == "rp_c") rd3(a.rpC);
         else if (k == "rp_glow") rd(a.rpGlow); else if (k == "rp_dur") rd(a.rpDur);
         else if (k == "rp_crits") { int v = 1; in >> v; a.rpCrits = v != 0; } else if (k == "rp_ring") { int v = 1; in >> v; a.rpRing = v != 0; }
@@ -232,7 +238,7 @@ void pollAtmos() {
         else if (k == "cy_reality") rd(a.cyReality); else if (k == "cy_glow") rd(a.cyGlow); else if (k == "cy_circuits") rd(a.cyCircuits);
         else if (k == "cy_scan") rd(a.cyScan); else if (k == "cy_sky") { int v = 1; in >> v; a.cySky = v != 0; }
         else if (k == "cu") { int v = 0; in >> v; a.cu = v != 0; } else if (k == "cu_c") rd3(a.cuC);
-        else if (k == "cu_soft") rd(a.cuSoft); else if (k == "cu_hearts") rd(a.cuHearts); else if (k == "cu_sparkle") rd(a.cuSparkle); else if (k == "cu_pastel") rd(a.cuPastel);
+        else if (k == "cu_soft") rd(a.cuSoft); else if (k == "cu_hearts") rd(a.cuHearts); else if (k == "cu_sparkle") rd(a.cuSparkle); else if (k == "cu_pastel") rd(a.cuPastel); else if (k == "cu_eyes") { int v = 1; in >> v; a.cuEyes = v != 0; }
         else if (k == "pano_capture") { int v = 0; in >> v; rf::pano::request(v); }
         else if (k == "freelook") { int key = 0, mode = 0; float dist = 4.0f; in >> key >> mode >> dist; rf::spatialcam::setFreelook(key, mode, dist); }
         else if (k == "wg") { int v = 0; in >> v; a.wg = v != 0; } else if (k == "wg_c") rd3(a.wgC);
@@ -1777,9 +1783,9 @@ void testBed() { ++gTestBedReq; }
 // Leonardoinc22) - all used with their authors' permission (shaders/death_scenes*.hlsli)
 // 14-62 Finishers 2 (by kyryi / dulimo): its 40 death effects and 9 specials; 63-79 Epic Fight's signature skills (by
 // Yesman and team) - also used with their authors' permission
-// 80-82 Bedrock Forge originals: Shatter, Light Pillar, Constellation (scene codes 82-84; picked from the 4 previews -
+// 80-83 Bedrock Forge originals: Shatter, Light Pillar, Constellation, Afterglow (scene codes 82-85; picked from the 4 previews -
 // Afterglow left out)
-constexpr int kDeathScenes = 83;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
+constexpr int kDeathScenes = 84;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
 static int deathSceneFor(uint64_t key) {
     static uint64_t keys[32]{}; static int vals[32]{}; static int nk = 0;
     for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
@@ -1803,7 +1809,7 @@ static int deathSceneCode(int scene, uint64_t key) {
     uint32_t const h = uint32_t((key * 0x9E3779B97F4A7C15ull) >> 40);
     if (scene == 12) return 12 + int(h % 100u >= 55u);
     if (scene == 13) return 14 + int(h & 1u);
-    if (scene >= 14) return scene + 2;   // Finishers 2: codes 16-64, Epic Fight: 65-81, originals 82-84
+    if (scene >= 14) return scene + 2;   // Finishers 2: codes 16-64, Epic Fight: 65-81, originals 82-85
     return scene;
 }
 // where the camera looked when a kill came (the finishers lay the pair out side-on to it); kept per kill so the scene
@@ -3013,6 +3019,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, atm.paDur, 0.9f});
             for (auto const& e : ev->e) if (e.atMs > 0 && e.kind != 0 && float(nowMs - e.atMs) < maxAge * 1000.0f) { atmosNeed = true; break; }
+            if (atm.hs && inkAlive(nowMs, std::max(atm.hsDur, 8.0f))) atmosNeed = true;   // puddles still on the ground
             // Block Outline: only while you aim at a block (and a moment after, while it fades)
             if (atm.bo && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx) && nowMs - ev->bAtMs < 600) {
                 static int64_t lastBlockMs = 0;
@@ -3205,7 +3212,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
                        float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; float wxL[4];
-                       float bo[3][4]; float wg[2][4]; float cp[3][4]; float cy[2][4]; float cu[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float bo[3][4]; float wg[2][4]; float cp[3][4]; float cy[2][4]; float cu[2][4]; float ink[24][4]; float inkInfo[4]; float inkD[24][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3356,6 +3363,39 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 }
             }
             acb.fx[6][3] = float(n);
+            if (atm.hs) {   // new hits become puddles; live puddles go to the shader
+                int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (auto const* ev = rf::postfx::fxEvents()) {
+                    for (uint32_t i = 0; i < 32; ++i) {
+                        auto const& e = ev->e[i];
+                        if (e.atMs <= 0 || (e.kind != 2 && e.kind != 3) || nowMs - e.atMs > 1500) continue;
+                        bool seen = false;
+                        for (int k = 0; k < 48; ++k) if (gInkSeen[k] == e.atMs) { seen = true; break; }
+                        if (seen) continue;
+                        gInkSeen[gInkSeenN++ % 48] = e.atMs;
+                        InkPuddle& p = gInk[gInkNext++ % 24];
+                        p.x = e.x; p.y = e.y; p.z = e.z; p.at = e.atMs;
+                        p.seed = float((uint64_t(e.atMs) * 2654435761ull) % 1000ull) / 1000.0f;
+                        {   // the way the ink is thrown: from you to the one you hit (Purxiy: a long splatter running away from you)
+                            double hx = e.x - ev->px, hz = e.z - ev->pz, hl = std::sqrt(hx * hx + hz * hz);
+                            if (hl > 1e-3) { p.dx = float(hx / hl); p.dz = float(hz / hl); }
+                            else { float const a = p.seed * 6.2831853f; p.dx = std::cos(a); p.dz = std::sin(a); }
+                        }
+                    }
+                }
+                float const life = std::max(atm.hsDur, 8.0f);
+                int m = 0;
+                for (auto const& p : gInk) {
+                    if (p.at <= 0) continue;
+                    float const age = float(nowMs - p.at) / 1000.0f;
+                    if (age < 0.f || age > life) continue;
+                    acb.ink[m][0] = float(p.x - snap.pos[0]); acb.ink[m][1] = float(p.y - snap.pos[1]); acb.ink[m][2] = float(p.z - snap.pos[2]);
+                    acb.ink[m][3] = age + std::floor(p.seed * 1000.f) * 100.f;   // age + seed packed (age < 100 s)
+                    acb.inkD[m][0] = p.dx; acb.inkD[m][1] = p.dz;
+                    ++m;
+                }
+                acb.inkInfo[0] = float(m); acb.inkInfo[1] = life; acb.inkInfo[2] = atm.hsMode;
+            }
             if (atm.pa) {
                 for (int k = 0; k < 3; ++k) acb.pa[0][k] = lin(atm.paC[k]);
                 acb.pa[0][3] = std::max(atm.paDur, 0.05f); acb.pa[1][0] = atm.paGlow; acb.pa[1][1] = atm.paBreak ? 1.f : 0.f;
@@ -3376,6 +3416,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 if (dx * dx + dz * dz < (e.r + 0.35f) * (e.r + 0.35f) && dy < 0.3f && dy + e.h > -0.3f) continue;   // the camera is in it: you, first person
                 if (dx * dx + dy * dy + dz * dz > 70.0f * 70.0f) continue;
                 acb.pos[n][0] = dx; acb.pos[n][1] = dy; acb.pos[n][2] = dz; acb.pos[n][3] = e.r; acb.dim[n][0] = e.h;
+                acb.dim[n][1] = e.pad[0]; acb.dim[n][2] = e.pad[1]; acb.dim[n][3] = e.pad[2];   // [Cute World] head yaw, yaw known, real height (+1000 player)
                 ++n;
             }
             acb.info[0] = float(n);
@@ -3430,7 +3471,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             }
             if (atm.cu) {
                 for (int k = 0; k < 3; ++k) acb.cu[0][k] = lin(atm.cuC[k]);
-                acb.cu[0][3] = atm.cuSoft; acb.cu[1][0] = atm.cuHearts; acb.cu[1][1] = atm.cuSparkle; acb.cu[1][2] = atm.cuPastel; acb.cu[1][3] = 1.f;
+                acb.cu[0][3] = atm.cuSoft; acb.cu[1][0] = atm.cuHearts; acb.cu[1][1] = atm.cuSparkle; acb.cu[1][2] = atm.cuPastel; acb.cu[1][3] = atm.cuEyes ? 2.f : 1.f;   // 2: anime eyes on faces
             }
             if (atm.bo && ev && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx) && !rf::pano::capturing()) {   // (not baked into the title-screen capture)
                 static double gx = 0, gy = 0, gz = 0; static float fade = 0; static int64_t lt = 0; static bool have = false;

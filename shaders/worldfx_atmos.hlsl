@@ -88,6 +88,9 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 cy1;      // x = glow, y = circuits, z = scan interval (s), w = sign: data sky on / off, |w| - 1 = seconds since Cyberspace came on
     float4 cu0;      // Cute World: rgb blush / heart colour (linear), w = softness (-1 = off)
     float4 cu1;      // x = hearts amount, y = sparkles, z = pastel strength, w = 1: on
+    float4 ink[24];  // Gold Ink puddles: xyz the hit (camera-relative), w = age + seed * 100000 (seed 0..999)
+    float4 inkInfo;  // x = how many, y = how long they stay (s), z = colour mode (0 single, 1 gradient, 2 neon mix, 3 dark)
+    float4 inkD[24]; // xy = the way each puddle was thrown (xz, from you to the one hit)
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -232,6 +235,146 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
 
 // Jump Circles, Hit Splash, Ripple, Shockwave: light painted onto whatever surface is there (the pixel's own world
 // point from the depth buffer), so rings follow steps and slopes instead of floating on a flat disc.
+// Gold Ink puddles (round 3, Fernando: "every hit leaves its own puddle, they stack and stay, different colours, very
+// vibrant, glowing neon"). One per hit from RF's own list; each picks a neon colour from its seed (the module's two
+// colours are two of them), lands a little off the hit point so repeated hits spread out, and glows - a hot core, a
+// bright rim, a halo on the ground round it - fading only at the very end of its life.
+float3 inkNeon(float s) {
+    int i = int(frac(sin(s * 91.7 + 3.1) * 43758.5453) * 7.0);
+    return i == 0 ? fx2.rgb : i == 1 ? fx3.rgb : i == 2 ? float3(1.0, 0.10, 0.62) : i == 3 ? float3(0.05, 0.85, 1.0)
+         : i == 4 ? float3(0.45, 1.0, 0.10) : i == 5 ? float3(0.62, 0.20, 1.0) : float3(1.0, 0.45, 0.02);
+}
+float3 inkPuddles(float3 P, float upN, float t) {
+    int n = min(int(inkInfo.x + 0.5), 24);
+    if (n <= 0 || fx1.z <= 0.0 || upN < 0.6) return 0;
+    float3 L = 0;
+    float life = max(inkInfo.y, 1.0);
+    float topAge = 1e9, topA = 0.0; float3 topC = 0, haloL = 0;
+    [loop] for (int i = 0; i < n; ++i) {
+        float age = frac(ink[i].w / 100.0) * 100.0, seed = floor(ink[i].w / 100.0) / 1000.0;
+        float3 c = ink[i].xyz;
+        float3 dv = P - c;
+        if (dv.y > 0.3 || dv.y < -2.6) continue;
+        // (round 5, from Fernando's own clips of the Purxiy Hit Splash, frame by frame: a STARBURST under the one hit -
+        //  a white-hot core fading into the colour, 9-13 long tapering fingers each ending in a round bulb, splats flung
+        //  2-4 blocks out mostly one way, specks, and a soft glow over the whole patch. Every hit lays another; they stay.)
+        float Sz = fx1.z * (0.9 + 0.35 * frac(seed * 3.7));
+        float2 dirT = normalize(inkD[i].xy + float2(1e-4, 0));
+        float2 sideT = float2(-dirT.y, dirT.x);
+        float2 q = dv.xz - (float2(frac(seed * 31.0), frac(seed * 57.0)) - 0.5) * 0.5 * fx1.z;   // a little off each time
+        float rq = length(q);
+        if (rq > 4.5 * Sz) continue;
+        float an = atan2(q.y, q.x);
+        // (round 6, Fernando: "too star-like, the same pattern reused". Every splatter is its own now: a lumpy core of
+        //  2-3 merged blobs, 5-14 fingers at random angles - some clumped, some stubby, some long - each wobbling, some
+        //  forking, ending in a drop; flung splats are elongated irregular drops, not stars.)
+        float  H0 = hash12b(float2(seed * 977.0, 3.1));
+        float dm = 9.0;
+        [unroll] for (int ck = 0; ck < 3; ++ck) {
+            float h1 = hash12b(float2(seed * 977.0, 10.0 + float(ck))), h2 = hash12b(float2(seed * 977.0, 20.0 + float(ck)));
+            float2 cc = (float2(h1, h2) - 0.5) * 0.55 * Sz * step(0.5, float(ck));
+            float  rcc = Sz * (0.32 + 0.22 * hash12b(float2(seed * 977.0, 30.0 + float(ck)))) * (ck == 0 ? 1.0 : 0.75);
+            float  aq = atan2(q.y - cc.y, q.x - cc.x);
+            float  dc = length(q - cc) - rcc * (1.0 + 0.10 * sin(aq * 3.0 + h1 * 30.0) + 0.06 * sin(aq * 7.0 + h2 * 20.0));
+            float  hh = saturate(0.5 + 0.5 * (dm - dc) / 0.12);
+            dm = lerp(dm, dc, hh) - 0.12 * hh * (1.0 - hh);
+        }
+        int   nF = 5 + int(H0 * 10.0);
+        float fing = 9.0, tipD = 9.0;
+        [loop] for (int fk = 0; fk < nF; ++fk) {
+            float ff = float(fk);
+            float ha = hash12b(float2(seed * 977.0, 40.0 + ff)), hl = hash12b(float2(seed * 977.0, 60.0 + ff)), hw = hash12b(float2(seed * 977.0, 80.0 + ff));
+            float fa = ha * 6.2831853;                                         // anywhere round - clumps and gaps
+            float2 fd = float2(cos(fa), sin(fa));
+            float Lf = Sz * (0.45 + 2.4 * hl * hl) * (0.75 + 0.5 * saturate(dot(fd, dirT) + 0.6));
+            float hh = saturate(dot(q, fd) / Lf);
+            float w = Sz * (0.09 + 0.18 * hw) * pow(1.0 - hh, 0.7 + 0.8 * hl) + Sz * 0.025;
+            float bend = Sz * (0.25 * (hw - 0.5)) * hh * hh + Sz * 0.04 * sin(hh * 9.0 + ha * 40.0) * hh;
+            float2 nrm2 = float2(-fd.y, fd.x);
+            float2 cl = fd * hh * Lf + nrm2 * bend;
+            fing = min(fing, length(q - cl) - w);
+            float2 tip = fd * Lf + nrm2 * Sz * (0.25 * (hw - 0.5) + 0.04 * sin(9.0 + ha * 40.0));
+            tipD = min(tipD, length(q - tip) - Sz * (0.04 + 0.08 * hw) * step(0.3, hl));
+            if (hw > 0.6) {                                                   // a fork off this finger
+                float2 fd2 = normalize(fd + nrm2 * (hw - 0.8) * 2.5);
+                float2 o2 = fd * Lf * 0.45 + nrm2 * bend * 0.45;
+                float  L2 = Lf * 0.45;
+                float  h3 = saturate(dot(q - o2, fd2) / L2);
+                fing = min(fing, length(q - o2 - fd2 * h3 * L2) - Sz * 0.05 * (1.0 - h3) - Sz * 0.012);
+            }
+        }
+        float hhm = saturate(0.5 + 0.5 * (dm - fing) / 0.08);
+        dm = lerp(dm, fing, hhm) - 0.08 * hhm * (1.0 - hhm);
+        dm = min(dm, tipD);
+        // splats flung out (mostly along the hit): elongated irregular drops
+        float spl = 9.0;
+        int nS = 3 + int(hash12b(float2(seed * 977.0, 5.0)) * 6.0);
+        [loop] for (int sk = 0; sk < nS; ++sk) {
+            float h1 = hash12b(float2(seed * 977.0, 100.0 + float(sk))), h2 = hash12b(float2(seed * 977.0, 120.0 + float(sk))), h3 = hash12b(float2(seed * 977.0, 140.0 + float(sk)));
+            float sa = (h1 - 0.5) * 3.0;
+            float2 sdir = dirT * cos(sa) + sideT * sin(sa);
+            float2 sp = sdir * Sz * (1.5 + 2.4 * h2);
+            float2 sq = q - sp;
+            float2 sl = float2(dot(sq, sdir), dot(sq, float2(-sdir.y, sdir.x)));
+            float  sr = Sz * (0.07 + 0.13 * h3);
+            float  wob = 1.0 + 0.18 * sin(atan2(sl.y, sl.x) * 3.0 + h2 * 20.0) + 0.1 * sin(atan2(sl.y, sl.x) * 5.0 + h3 * 30.0);
+            spl = min(spl, length(sl * float2(0.45 + 0.35 * h3, 1.0)) - sr * wob);   // stretched along its flight
+        }
+        float specks = 0.0;
+        [unroll] for (int d = 0; d < 12; ++d) {
+            float h1 = hash12b(float2(seed * 977.0, 200.0 + float(d))), h2 = hash12b(float2(seed * 977.0, 220.0 + float(d)));
+            float2 dp = float2(cos(h1 * 6.2831853), sin(h1 * 6.2831853)) * Sz * (1.2 + 2.4 * h2);
+            specks = max(specks, 1.0 - smoothstep(0.035 * Sz, 0.05 * Sz, length(q - dp)));
+        }
+        float blob  = 1.0 - smoothstep(-0.01, 0.015, dm);
+        float splat = 1.0 - smoothstep(-0.01, 0.015, spl);
+        float ink   = max(max(blob, splat), specks);
+        float inner = max(saturate(1.0 - rq / (0.75 * Sz)), saturate(-spl / (0.06 * Sz)) * splat);   // white-hot at the core and the splats' hearts
+        float halo  = exp(-max(min(dm, spl), 0.0) / (0.06 * Sz)) * (1.0 - ink);   // (Fernando: no mist round it - only a tight glow hugging the ink)
+        float rim   = exp(-pow(min(dm, spl) / (0.035 * Sz), 2.0));
+        float gloss = 0.0;
+        // colour mode
+        int   mode = int(inkInfo.z + 0.5);
+        float3 col = mode == 0 ? fx2.rgb : mode == 1 ? lerp(fx2.rgb, fx3.rgb, saturate(rq / (2.5 * Sz) + 0.3 * sin(seed * 20.0))) : mode == 2 ? inkNeon(seed) : fx2.rgb;
+        float3 hot = lerp(col, float3(1.0, 1.0, 1.0), 0.75);
+        float  fade = smoothstep(life, life * 0.75, age);
+        float  pop  = 1.0 + 1.0 * exp(-age * 5.0);
+        float  pulse = 0.92 + 0.08 * sin(t * 2.0 + seed * 40.0);
+        float  crk = 0.0;
+        float3 body = mode == 3 ? col * 0.10 + hot * inner * 0.35 : lerp(col, hot, pow(inner, 1.5)) * (0.8 + 0.5 * inner);
+        float3 oInk = body * (0.8 + 0.5 * fx2.w) + (mode == 3 ? col * 1.6 : hot * 0.6) * rim * ink;
+        float3 oHalo = col * halo * (0.55 + 0.6 * fx2.w);
+        float  k = pop * pulse * fade * smoothstep(0.0, 1.1, 2.6 + dv.y);
+        if (ink > 0.02 && age < topAge) { topAge = age; topC = oInk * k; topA = ink; }   // the newest lies on top
+        haloL += oHalo * k * 0.5;                                                        // the glows add up as they stack
+    }
+    L = lerp(min(haloL, 1.2), topC, topA);
+    return L;
+}
+// the ripple's neon outline: where the body's edge meets what is behind it (a depth jump), near a fresh hit
+float3 rippleEdge(int2 px, float3 P, float zc) {
+    int n = min(int(fx6.w), 16);
+    float3 L = 0;
+    [loop] for (int i = 0; i < n; ++i) {
+        int kind = int(evK[i].x + 0.5);
+        if (kind != 2 && kind != 3) continue;
+        float age = evP[i].w;
+        if (age > 0.45) continue;
+        float3 dv = P - evP[i].xyz;
+        if (length(dv.xz) > 0.8 || dv.y < -1.7 || dv.y > 1.0) continue;
+        float w = max(2.0, 3.0 * c4.y / 1080.0);
+        float edge = 0.0;
+        [unroll] for (int k = 0; k < 4; ++k) {
+            int2 o = k == 0 ? int2(1, 0) : k == 1 ? int2(-1, 0) : k == 2 ? int2(0, 1) : int2(0, -1);
+            float zz = viewZ(rawDepth(px + o * int(w)));
+            edge = max(edge, zz > zc + 0.5 ? 1.0 : 0.0);
+        }
+        float env = smoothstep(0.0, 0.04, age) * (1.0 - smoothstep(0.25, 0.45, age));
+        float flick = 0.8 + 0.2 * sin(age * 70.0 + dv.y * 20.0);
+        L += lerp(fx4.rgb, float3(1.0, 1.0, 1.0), 0.35) * edge * env * flick * 1.6 * fx3.w;
+    }
+    return L;
+}
 float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN: how much the surface here faces up (1 = floor)
     int n = min(int(fx6.w), 16);
     if (n <= 0 || sky) return 0;
@@ -259,22 +402,27 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
         } else if ((kind == 2 || kind == 3) && (fx1.z > 0.0 || fx3.w > 0.0)) {
             // (in game 2026-11-19: the ink was painted on everything standing in its column - the player you hit, walls,
             //  fences - and read as a bug. It lies on floors only now: surfaces that face up.)
-            if (fx1.z > 0.0 && dv.y < 0.3 && dv.y > -2.6 && upN > 0.6) {       // splash: ink on the ground under the hit, fading slowly
-                float u = age / max(fx1.w, 0.1);
-                if (u < 1.0) {
-                    float2 q = dv.xz;
-                    float  r = length(q), an = atan2(q.y, q.x);
-                    float  rad = 0.55 * fx1.z * (0.72 + 0.20 * sin(an * 3.0 + seed * 6.3) + 0.12 * sin(an * 7.0 + seed * 11.0)) * (0.55 + 0.45 * smoothstep(0.0, 0.08, u));
-                    float  blob = smoothstep(rad, rad * 0.82, r);
-                    float  drops = 0.0;
-                    [unroll] for (int d = 0; d < 5; ++d) {           // droplets thrown out round it
-                        float a2 = seed * 17.0 + float(d) * 1.9, dr = rad * (1.25 + 0.5 * frac(seed * 7.3 + float(d) * 0.37));
-                        float2 dp = float2(cos(a2), sin(a2)) * dr;
-                        drops = max(drops, smoothstep(0.075 * fx1.z, 0.045 * fx1.z, length(q - dp)));
-                    }
-                    float ink = max(blob, drops) * smoothstep(1.0, 0.6, u) * smoothstep(0.0, 1.1, 2.6 + dv.y) * smoothstep(0.6, 0.8, upN);
-                    float3 cc = lerp(fx2.rgb, fx3.rgb, 0.5 + 0.5 * sin(an * 2.0 + seed * 5.0));
-                    L += cc * ink * (0.25 + 0.9 * fx2.w * (1.0 - u * 0.7)) * (1.0 + 2.0 * exp(-age * 6.0));
+            // (the ink on the ground is its own list now: inkPuddles(), drawn for as long as a puddle stays)
+            if (fx1.z > 0.0 && age < 0.45) {   // (Purxiy clip: bright liquid streaks shoot from the blow down to the ground, where the starburst lands)
+                float dist0 = length(P);
+                int   mode = int(inkInfo.z + 0.5);
+                float3 sc = mode == 2 ? inkNeon(seed) : fx2.rgb;
+                [unroll] for (int k = 0; k < 8; ++k) {
+                    float fk = float(k), h1 = frac(seed * 13.7 + fk * 0.618), h2 = frac(seed * 7.1 + fk * 0.371);
+                    float a = h1 * 6.2831853;
+                    float3 land = c + float3(cos(a) * (0.6 + 1.2 * h2), -1.25, sin(a) * (0.6 + 1.2 * h2)) * float3(fx1.z, 1.0, fx1.z);
+                    float u = saturate(age / (0.18 + 0.08 * h2));
+                    float3 hd = lerp(c, land, u * u);                               // falls, faster as it goes
+                    float3 ab = (c - land) * 0.35 * (1.0 - u * 0.6);
+                    float d1 = dot(rd, ab), d2 = dot(ab, ab), e1 = dot(rd, hd), e2 = dot(ab, hd);
+                    float den = d2 - d1 * d1;
+                    float uu = den > 1e-6 ? saturate((d1 * e1 - e2) / den) : 0.0;
+                    float3 cp = hd + ab * uu;
+                    float tz = dot(cp, rd);
+                    if (tz < 0.2 || tz > dist0 + 0.05) continue;
+                    float dd = length(rd * tz - cp);
+                    float fadeS = 1.0 - smoothstep(0.25, 0.45, age);
+                    L += lerp(sc, float3(1.0, 1.0, 1.0), 0.6 * (1.0 - uu)) * (exp(-pow(dd / 0.018, 2.0)) * 2.0 + exp(-dd / 0.06) * 0.3) * (1.0 - uu) * fadeS;
                 }
             }
             // on the one you hit (Fernando 2026-11-19: "hit the player too, just look better"): no ink smeared on them -
@@ -300,30 +448,105 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                     L += float3(1.0, 0.85, 1.0) * wash * 0.9 * (0.5 + fx2.w) * (kind == 3 ? 1.3 : 1.0);
                 }
             }
-            if (fx3.w > 0.0) {                                   // ripple: a flash, and a wave of light over what is near
-                // (Fernando 2026-11-19: "ripple doesn't look that good, not shiny". Now a prismatic wave: the ring splits
-                //  into its colour and white like light through glass, a second fainter echo follows it, the ground
-                //  ring gets the same, and a burst of glints rides the front.)
+            if (fx3.w > 0.0) {
+                // RIPPLE, round 2 (Fernando: "should look more like the reference" - video 3, 142.9-144.9 s @30 fps):
+                //  0-60 ms   a white-hot impact ORB at the blow with a fresnel rim and a gold bloom
+                //  30-250 ms it opens into a CRESCENT SHELL - the half of a sphere facing away from you, a thick bright
+                //            leading rim, a translucent gold inside - growing to ~1.6 blocks and sweeping over the body
+                //  to 450 ms the body glows in the colour, a shimmer running over it, then clears
                 float u = age / max(fx4.w, 0.05);
-                if (u < 1.0) {
-                    float d3 = length(dv), ease = 1.0 - pow(1.0 - u, 2.0), fade = pow(1.0 - u, 1.3);
-                    float R = 2.6 * ease, W = 0.12 + 0.06 * u;
-                    float3 cA = fx4.rgb, cW = float3(1.0, 0.98, 0.96);
-                    float3 cB = float3(fx4.b, fx4.r, fx4.g) * 0.8 + 0.2;     // a shifted hue for the outer fringe
-                    float3 ring = cA * exp(-pow((d3 - R) / W, 2.0)) + cW * 1.3 * exp(-pow((d3 - R + 0.04) / (W * 0.35), 2.0))
-                                + cB * 0.7 * exp(-pow((d3 - R - W * 1.2) / (W * 0.7), 2.0))
-                                + cA * 0.45 * exp(-pow((d3 - R * 0.62) / (W * 0.8), 2.0));   // the echo
-                    float3 flash = (cW * 0.9 + cA * 0.7) * exp(-d3 * 3.4) * exp(-age * 14.0);   // a quick pop, not a white-out
-                    float3 Lr = ring * fade + flash;
-                    if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4) {   // the rings rolling over the ground
-                        float r = length(dv.xz), R2 = 3.2 * (1.0 - pow(1.0 - u, 2.5)), an = atan2(dv.z, dv.x);
-                        float gl = pow(0.5 + 0.5 * cos(an * 9.0 + seed * 30.0 + u * 4.0), 24.0);   // glints on the front
-                        Lr += (cA * exp(-pow((r - R2) / 0.09, 2.0)) + cW * 0.9 * exp(-pow((r - R2 + 0.02) / 0.03, 2.0))
-                               + cA * 0.4 * exp(-pow((r - R2 * 0.6) / 0.07, 2.0)) + cW * gl * 2.0 * exp(-pow((r - R2) / 0.12, 2.0))) * fade;
+                float3 cA = fx4.rgb, cW = float3(1.0, 0.98, 0.94);
+                float3 cIn = lerp(cA, cW, 0.45);
+                float3 away = c - pl.xyz; away.y = 0.0; away = length(away) > 1e-3 ? normalize(away) : rd;
+                float3 Lr = 0;
+                float  dist0 = length(P);
+                // the orb
+                if (age < 0.12) {
+                    float ro = 0.11 * (1.0 + age * 3.0);
+                    float b0 = dot(c, rd), dd = length(rd * b0 - c);
+                    if (b0 - ro < dist0 + 0.05) {
+                        float fr = dd / ro;
+                        float body = saturate(1.0 - fr * fr) , rim = exp(-pow((fr - 0.92) / 0.10, 2.0));
+                        float k = (1.0 - smoothstep(0.06, 0.12, age));
+                        Lr += (cW * (body * 2.2 + rim * 2.6) + cA * exp(-fr * 2.2) * 0.8) * k * step(fr, 2.2);
                     }
-                    if (kind == 3 && fx5.y > 0.5) Lr *= 1.8;          // a critical hit lands harder
-                    L += Lr * fx3.w * 1.4;
                 }
+                // (round 3, Fernando: "bland - keep it ON the body's silhouette, nothing that hides the fight".) No shell
+                // in the air any more. On the body: an energy front crawls out over the surface from the blow, a hex
+                // lattice lights up behind it and dies away cell by cell, thin arcs crackle across it; the outline of
+                // the body glows (drawn in the pass, rippleEdge()).
+                if (upN < 0.6 && length(dv.xz) < 0.75 && dv.y > -1.6 && dv.y < 0.9) {
+                    float ub = saturate(age / 0.38);
+                    float r3 = length(dv);
+                    float Rf = 1.7 * (1.0 - pow(1.0 - ub, 2.2));
+                    float fadeB = 1.0 - smoothstep(0.55, 1.0, ub);
+                    float front = exp(-pow((r3 - Rf) / 0.045, 2.0)) + 0.5 * exp(-pow((r3 - Rf) / 0.14, 2.0));
+                    // hex lattice, in the plane facing you (so it reads the same from any side)
+                    float3 rgt = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), upv = cross(rgt, rd);
+                    float2 hp = float2(dot(dv, rgt), dot(dv, upv)) / 0.06;
+                    float2 hq = float2(hp.x * 1.1547, hp.y + hp.x * 0.57735);
+                    float2 hi = floor(hq), hf = frac(hq);
+                    float  he = min(min(hf.x, hf.y), min(1.0 - hf.x, 1.0 - hf.y));
+                    he = min(he, abs(hf.x - hf.y));
+                    float  cellH = frac(sin(dot(hi, float2(127.1, 311.7))) * 43758.5453);
+                    float  behind = smoothstep(Rf, Rf - 0.08, r3) * exp(-(Rf - r3) * 3.0);
+                    float  cellOn = step(cellH, 0.55 + 0.4 * (1.0 - ub)) * behind;
+                    float  lattice = (1.0 - smoothstep(0.03, 0.10, he)) * cellOn * 1.8 + (0.45 * cellOn) * step(0.75, cellH);
+                    // arcs: thin crackling threads
+                    float nA = sin(dv.y * 23.0 + sin(dot(dv.xz, float2(17.0, 11.0)) + age * 40.0) * 2.0 + seed * 30.0);
+                    float arcs = exp(-pow(nA / 0.06, 2.0)) * exp(-r3 * 2.5) * (1.0 - smoothstep(0.0, 0.3, age)) * step(0.5, frac(age * 24.0 + seed));
+                    float wash = (1.0 - smoothstep(0.08, 0.45, age)) * smoothstep(0.0, 0.05, age) * 0.18;
+                    // (round 4, Fernando: "more dynamic, unique and dramatic on the body") a later echo wave; the front splits
+                    // into colour fringes like light through a prism; branching lightning veins race out behind the front
+                    float Re = 1.7 * (1.0 - pow(1.0 - saturate((age - 0.12) / 0.3), 2.2));
+                    float echo = exp(-pow((r3 - Re) / 0.035, 2.0)) * step(0.12, age) * 0.8;
+                    float3 prism = float3(exp(-pow((r3 - Rf - 0.05) / 0.03, 2.0)), 0.0, exp(-pow((r3 - Rf + 0.05) / 0.03, 2.0)));
+                    float2 vq = float2(dot(dv, rgt), dot(dv, upv));
+                    float va = atan2(vq.y, vq.x), vr = length(vq);
+                    float vein = 0.0;
+                    [unroll] for (int vk = 0; vk < 5; ++vk) {
+                        float base = seed * 20.0 + float(vk) * 1.2566;
+                        float wig = 0.35 * sin(vr * 14.0 + float(vk) * 3.0 + seed * 9.0) + 0.15 * sin(vr * 37.0 + float(vk));
+                        float da = atan2(sin(va - base - wig * vr), cos(va - base - wig * vr));
+                        vein += exp(-pow(da * vr / 0.012, 2.0)) * step(vr, Rf);
+                        float da2 = atan2(sin(va - base - 0.5 - wig * vr * 1.3), cos(va - base - 0.5 - wig * vr * 1.3));
+                        vein += 0.6 * exp(-pow(da2 * vr / 0.009, 2.0)) * step(0.15, vr) * step(vr, Rf * 0.8);
+                    }
+                    vein *= (1.0 - smoothstep(0.05, 0.35, age)) * (0.7 + 0.3 * step(0.5, frac(age * 30.0 + seed)));
+                    Lr += (cW * (front * 1.6 + arcs * 1.4 + vein * 1.4) + cA * (front * 1.4 + lattice * 1.5 + arcs * 0.8 + wash + echo + vein * 1.2)
+                           + prism * float3(1.0, 0.3, 1.0) * 1.2) * fadeB;
+                }
+                // sparks bursting off the body - kept within about a block
+                if (age < 0.4) {
+                    float dist0b = length(P);
+                    float3 rg2 = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), up2 = cross(rg2, rd);
+                    [unroll] for (int k = 0; k < 10; ++k) {
+                        float fk = float(k), h1 = frac(seed * 9.1 + fk * 0.618), h2 = frac(seed * 4.7 + fk * 0.37);
+                        float a = h1 * 6.2831853;
+                        float3 dirS = normalize(rg2 * cos(a) + up2 * sin(a) + away * 0.6);
+                        float sp = 2.6 + 2.0 * h2;
+                        float3 hd = c + dirS * sp * age * (1.0 - age * 1.2);
+                        float3 ab = -dirS * 0.18;
+                        float d1 = dot(rd, ab), d2 = dot(ab, ab), e1 = dot(rd, hd), e2 = dot(ab, hd);
+                        float den = d2 - d1 * d1;
+                        float uu = den > 1e-6 ? saturate((d1 * e1 - e2) / den) : 0.0;
+                        float3 cp = hd + ab * uu;
+                        float tz = dot(cp, rd);
+                        if (tz < 0.2 || tz > dist0b + 0.05) continue;
+                        float dd = length(rd * tz - cp);
+                        Lr += lerp(cA, cW, 0.6 - 0.5 * uu) * exp(-pow(dd / 0.012, 2.0)) * (1.0 - uu) * 2.0 * (1.0 - age / 0.4);
+                    }
+                }
+                if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4 && upN > 0.6 && age < 0.35) {   // a small, tight impact at the feet (round 4: the big floor rings distracted in PvP)
+                    float uf = age / 0.35;
+                    float r = length(dv.xz), R2 = 0.85 * (1.0 - pow(1.0 - uf, 3.0));
+                    float an2 = atan2(dv.z, dv.x);
+                    float rays = pow(saturate(cos(an2 * 9.0 + seed * 30.0)), 10.0) * smoothstep(R2 + 0.25, R2, r) * smoothstep(0.1, R2, r);
+                    Lr += (cA * exp(-pow((r - R2) / 0.035, 2.0)) * 1.2 + cW * exp(-pow((r - R2) / 0.012, 2.0)) + cA * rays * 0.8
+                           + cA * exp(-r * r / 0.05) * 0.6 * (1.0 - uf)) * pow(1.0 - uf, 1.4);
+                }
+                if (kind == 3 && fx5.y > 0.5) Lr *= 1.5;
+                L += Lr * fx3.w * 1.2;
             }
         } else if ((kind == 5 || (kind == 6 && pa1.y > 0.5)) && pa0.w > 0.0) {   // a block placed / broken: light on its faces
             float u = age / pa0.w;
@@ -873,6 +1096,42 @@ float3 radiance(int2 p, float3 P, float zc) {
 // cylinders around you at four distances. Each cylinder is cut into thin columns; each column carries drops that fall
 // (or rise) through it. A drop is drawn only if that cylinder is nearer than the world at this pixel, so it is
 // depth-correct. Four layers make the depth; the near layer is sparse and big, the far ones dense and fine. ~0.3 ms.
+static const float LAVA_C = 4.0;
+void lavaCellLife(float2 cid, float t, out float2 ctr, out float age, out float per, out float rmax) {
+    float h = hash12b(cid + 7.1), h2 = hash12b(cid + 3.3), h3 = hash12b(cid + 9.9);
+    per  = 13.0 + 6.0 * h;
+    age  = frac(t / per + h) * per;                  // 0 = it just landed
+    ctr  = (cid + 0.2 + 0.6 * float2(h2, h3)) * LAVA_C;
+    rmax = 0.9 + 1.3 * h3;
+}
+// the molten drops that make the puddles (lavaCover): each falls in the last 0.8 s before its cell's puddle lands - a
+// white-hot head, an orange body, a long glowing tail of heat above it
+float3 lavaDrops(float3 rd, float dist, float t) {
+    float3 L = 0;
+    float  gy = c5.y + pl.y;                                             // the ground: your feet
+    float2 ci = floor(c5.xz / LAVA_C);
+    [loop] for (int k = 0; k < 25; ++k) {
+        float2 cid = ci + float2(k % 5 - 2, k / 5 - 2), ctr; float age, per, rmax;
+        lavaCellLife(cid, t, ctr, age, per, rmax);
+        float tl = per - age;                                            // seconds until it lands
+        if (tl > 0.8) continue;
+        float u = 1.0 - tl / 0.8;                                        // 0 high up .. 1 landing
+        float3 head = float3(ctr.x, gy + 22.0 * (1.0 - u * u), ctr.y) - c5.xyz;
+        float3 tail = head + float3(0, 3.0 + 3.0 * u, 0);
+        float3 ab = tail - head;
+        float d1 = dot(rd, ab), d2 = dot(ab, ab), e1 = dot(rd, head), e2 = dot(ab, head);
+        float den = d2 - d1 * d1;
+        float uu = den > 1e-6 ? saturate((d1 * e1 - e2) / den) : 0.0;
+        float3 cp = head + ab * uu;
+        float tz = dot(cp, rd);
+        if (tz < 0.3 || tz > dist + 0.05) continue;
+        float dd = length(rd * tz - cp);
+        float w = lerp(0.16, 0.03, uu);
+        float3 cc = lerp(float3(1.0, 0.85, 0.5), float3(0.9, 0.18, 0.02), sqrt(uu));
+        L += cc * (exp(-pow(dd / w, 2.0)) * (2.5 - 2.0 * uu) + exp(-dd / (w * 4.0)) * 0.35 * (1.0 - uu));
+    }
+    return L;
+}
 float3 weather(float3 rd, float dist, float t, float night) {
     int   mode = int(wx0.x + 0.5);
     float lh   = length(rd.xz);
@@ -884,7 +1143,7 @@ float3 weather(float3 rd, float dist, float t, float night) {
         float R = float(k == 0 ? 2.5 : k == 1 ? 5.0 : k == 2 ? 10.0 : 20.0) * (wx1.x / 24.0);
         if (R / lh > dist) break;                                // the world is nearer: this layer (and the farther ones) is hidden
         float y = slope * R;                                     // the height of the ray where it meets this cylinder
-        float cols = (mode == 0 ? 520.0 : mode == 1 ? 300.0 : 170.0) * (0.45 + 0.55 * float(k)) * wx0.y;
+        float cols = (mode == 0 ? 520.0 : mode == 1 ? 300.0 : 120.0) * (0.45 + 0.55 * float(k)) * wx0.y;
         float wa = ang + wx0.z * (mode == 0 ? 0.12 : 0.05) * y / R; // wind leans them
         float u  = wa / 6.2831853 * cols;
         float c  = floor(u), fu = frac(u) - 0.5;
@@ -892,12 +1151,12 @@ float3 weather(float3 rd, float dist, float t, float night) {
         float h2 = frac(h * 91.17 + 0.31);
         // (Purxiy reference, weather Fire: falling ember STREAKS - motion-blurred orange lines of mixed length with a hot
         //  head - plus faint sparks, not rising dots)
-        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : 3.2;
+        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : -0.5;
         float per = mode == 0 ? 9.0 : mode == 1 ? 5.0 : 7.0;
         float yy = y + t * sp * (0.85 + 0.3 * h2) + h * per;
         float ph = frac(yy / per) * per;                          // where in its drop period this ray is
-        float width = (mode == 0 ? 0.08 : mode == 1 ? 0.30 : 0.15) * wx0.w / (1.0 + float(k) * 0.4);
-        float len   = (mode == 0 ? 0.9 : mode == 1 ? 0.12 : 0.35 + 1.1 * h2 * h2) * wx0.w * (1.2 - 0.15 * float(k));
+        float width = (mode == 0 ? 0.08 : mode == 1 ? 0.30 : 0.05) * wx0.w / (1.0 + float(k) * 0.4);
+        float len   = (mode == 0 ? 0.9 : mode == 1 ? 0.12 : 0.07) * wx0.w * (1.2 - 0.15 * float(k));
         float across = exp(-pow(fu / width, 2.0)) * smoothstep(0.5, 0.36, abs(fu));   // zero at the column edge (no seams)
         float along  = mode == 0 ? smoothstep(0.0, 0.25, ph) * smoothstep(len, len * 0.6, ph)
                      : mode == 1 ? exp(-pow((ph - len) / max(len * 0.7, 0.02), 2.0))
@@ -906,6 +1165,7 @@ float3 weather(float3 rd, float dist, float t, float night) {
         if (h2 > 0.55 * wx0.y + 0.15) { along = 0; head = 0; }       // not every column carries one
         float fade = 1.0 - float(k) * 0.18;
         [branch] if (mode == 2) {
+            if (k > 1) continue;                                       // (only a few fine sparks in the air now: the drops are the show)
             float fl = 0.75 + 0.25 * sin(t * 9.0 + h * 40.0);
             float3 ec = lerp(float3(0.85, 0.12, 0.02), float3(1.0, 0.55, 0.12), pow(saturate(1.0 - ph / len), 2.0));
             float  glow = exp(-pow(fu / (width * 3.5), 2.0)) * smoothstep(0.5, 0.3, abs(fu));
@@ -921,6 +1181,7 @@ float3 weather(float3 rd, float dist, float t, float night) {
                               : float3(1.0, 0.42, 0.10) * (1.3 + 0.7 * sin(t * 7.0 + h * 40.0));
         L += cc * across * along * fade * (mode == 0 ? 0.30 : mode == 1 ? 0.75 : 1.1);
     }
+    [branch] if (mode == 2) L += lavaDrops(rd, dist, t);
     return L;
 }
 
@@ -1050,7 +1311,7 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
         float elev = wg1.z * (0.16 + 0.10 * cp2.z) * (0.5 + 0.5 * beat);       // the raised V on the up-beat
         float3 A0 = pl.xyz + up * 1.38 - fwd * 0.20;
         [unroll] for (int sgn = -1; sgn <= 1; sgn += 2) {
-            float fold = 0.45 + flap;                              // how far back the wing sweeps from the side (radians)
+            float fold = 0.22 + flap;                              // how far back the wing sweeps from the side (radians)
             float3 wOpen = normalize(side * float(sgn) * cos(fold) * cos(elev) - fwd * sin(fold) * cos(elev) + up * sin(elev));
             float3 wShut = normalize(-up * 0.85 + side * float(sgn) * 0.25 - fwd * 0.45);   // folded: hanging down the back
             float3 w = normalize(lerp(wShut, wOpen, open));
@@ -1239,6 +1500,34 @@ float2 lavaCell(float2 p) {                                  // x = distance to 
     }
     return float2(d2 - d1, id);
 }
+// Living lava (Fernando: "it shouldn't just cut and put the lava somewhere else - drops should fall, splash onto the
+// ground and make a puddle, and it should fade out"). The ground is cut into 4-block cells; each cell runs its own
+// cycle: a molten drop falls (lavaDrops in weather()), lands, splashes, the puddle spreads out in ~1.5 s, glows, cools
+// darker and fades, then the cell waits for its next drop. Period 13-19 s, out of step from cell to cell.
+float lavaCover(float2 xz, float t, out float heat, out float splash) {
+    float2 ci = floor(xz / LAVA_C);
+    float cov = 0.0; heat = 0.0; splash = 0.0;
+    [unroll] for (int j = -1; j <= 1; ++j) [unroll] for (int i = -1; i <= 1; ++i) {
+        float2 cid = ci + float2(i, j), ctr; float age, per, rmax;
+        lavaCellLife(cid, t, ctr, age, per, rmax);
+        if (age > per - 2.6) continue;                                   // waiting for its next drop
+        float2 d2 = xz - ctr; float r = length(d2);
+        float R = rmax * (1.0 - exp(-age * 2.4));
+        float an = atan2(d2.y, d2.x);
+        float edge = R * (1.0 + 0.22 * (vnoise2(float2(an * 1.6, cid.x * 3.1 + cid.y) + 4.0) - 0.5) * 2.0 + 0.12 * sin(an * 5.0 + cid.y));
+        float alive = 1.0 - smoothstep(per - 5.0, per - 2.7, age);      // cools and fades
+        float c = smoothstep(edge + 0.05, edge - 0.08, r) * alive;
+        if (c > cov) { cov = c; heat = 1.0 - 0.75 * smoothstep(5.0, per - 3.0, age); }
+        // the splash: a bright ring of spatter thrown out as it lands
+        float ua = age / 0.45;
+        if (ua < 1.0) {
+            float Rs = 0.3 + 1.6 * rmax * (1.0 - pow(1.0 - ua, 2.0));
+            float sp = pow(saturate(cos(an * 13.0 + cid.x * 7.0)), 6.0);
+            splash = max(splash, (exp(-pow((r - Rs) / 0.10, 2.0)) * (0.5 + sp) + exp(-r * r / 0.2) * 0.8) * (1.0 - ua));
+        }
+    }
+    return cov;
+}
 float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
     // (Fernando 2026-11-19: v1 "super ugly, pale" - a regular turtle-shell web of big plates and thin veins. The
     //  reference is the other way round: the ground is mostly GLOWING orange magma, broken by small irregular black
@@ -1254,32 +1543,31 @@ float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
     // the glow of the ground on walls / bodies near it (height above your feet)
     float hgt = max(wp.y - (c5.y + pl.y), 0.0);
     float3 bounce = float3(1.0, 0.38, 0.08) * exp(-hgt * 0.55) * (1.0 - up);
-    float3 o = L * (0.78 + bounce * 1.6) * float3(1.0, 0.86, 0.80);      // the scene warms and darkens a touch
+    float3 o = L * (0.90 + bounce * 1.6) * float3(1.0, 0.90, 0.86);      // the scene warms a touch
     if (up <= 0.0) return lerp(L, o, kd);
-    // (looked again at the reference zoomed in: lava lies in big RAGGED PATCHES over the street, the plain ground dark
-    //  between them; inside a patch it is a fine granular magma - small bright orange-red flecks, each its own shade,
-    //  split by thin dark cracks; a few flecks crusted black)
-    // (round 3, Fernando: "too clumpy, all over the place - theirs is spread out well, not cluttered but noticeable".
-    //  More, smaller patches covering about half the street, each edge dissolving into specks; the magma creeps slowly;
-    //  no black holes punched in it.)
-    float2 flow = float2(vnoise2(wp.xz * 0.25 + 1.7), vnoise2(wp.xz * 0.25 + 8.3)) - 0.5;
-    float  big  = vnoise2(wp.xz * 0.55 + 4.0) * 0.6 + vnoise2(wp.xz * 1.3 + 9.0) * 0.4;
-    float  rag  = vnoise2(wp.xz * 6.0 + 2.0) - 0.5;
-    float  cov  = big + rag * 0.30;
-    float  cover = smoothstep(0.50, 0.60, cov);                       // the body of a patch
-    float  edgeZ = smoothstep(0.40, 0.52, cov) * (1.0 - cover);       // its rim: specks only
-    float2 uv = wp.xz * 6.0 + flow * 1.2 + flow * t * 0.35;           // creeping magma
-    float  aa = 0.004 * dist + 0.012;
-    float  n1 = vnoise2(uv * 0.9) * 0.55 + vnoise2(uv * 2.1 + 3.0) * 0.30 + vnoise2(uv * 4.7 + 7.0) * 0.15;
-    float  thr = lerp(0.62, 0.36, cover);                              // inside: solid magma; at the rim: only its brightest specks
-    float  fleck = smoothstep(thr, thr + 0.08 + aa * 2.0, n1) * saturate(cover + edgeZ);
-    float  heat = 0.75 + 0.25 * sin(t * 1.6 + vnoise2(wp.xz * 1.1 + t * 0.2) * 7.0);
-    float  v = saturate((n1 - 0.40) * 2.6);
-    float3 fc = lerp(float3(0.62, 0.07, 0.01), float3(1.0, 0.38, 0.04), v);
-    fc = lerp(fc, float3(1.0, 0.68, 0.24), smoothstep(0.72, 0.9, n1) * 0.85);
-    float3 magma = fc * fleck * (0.8 + 0.7 * heat) + float3(0.20, 0.03, 0.0) * (1.0 - fleck) * cover * heat;   // gaps inside a patch glow faintly
-    float3 groundD = o * 0.62;
-    float3 g = lerp(groundD, magma, saturate(fleck + cover));
+    // (round 4, the deep pass - full-res frames of video 2 at 11 s: inside each patch the lava is a connected WEB of
+    //  thin bright orange veins, like a marbled crack network, over dark red-black cells that warm toward the veins;
+    //  big irregular patches cover about half the street; between them the road is simply the road.)
+    float  lheat, lsplash;
+    float  cover = lavaCover(wp.xz, t, lheat, lsplash);
+    float  aa = 0.003 * dist + 0.008;
+    float  tf = t * 0.06;                                                // the web creeps
+    float2 uv = wp.xz * 2.6;
+    float2 w1 = float2(vnoise2(uv * 0.55 + tf), vnoise2(uv * 0.55 + 5.2 - tf)) * 1.4;
+    float  n1 = vnoise2(uv + w1) * 0.62 + vnoise2(uv * 2.15 + w1 * 1.6 + 3.0) * 0.38;
+    float  r1 = abs(n1 - 0.5);                                           // ridge: 0 on a vein
+    float  n2 = vnoise2(uv * 2.6 + w1 * 2.0 + 11.0);
+    float  r2 = abs(n2 - 0.5);
+    float  vein  = 1.0 - smoothstep(0.012, 0.040 + aa, r1);
+    float  vein2 = (1.0 - smoothstep(0.010, 0.030 + aa, r2)) * 0.6;     // finer veins between
+    float  heat = (0.80 + 0.20 * sin(t * 1.4 + vnoise2(wp.xz * 0.9 + t * 0.15) * 6.0)) * (0.35 + 0.65 * lheat);
+    float  vv = max(vein, vein2);
+    float3 cell = lerp(float3(0.035, 0.008, 0.005), float3(0.30, 0.04, 0.008), exp(-min(r1, r2 * 1.3) * 11.0) * 0.8);   // dark, warming to the veins
+    float3 vc = lerp(float3(0.95, 0.30, 0.02), float3(1.0, 0.58, 0.16), pow(vv, 4.0));                                  // orange, a yellow core
+    float3 lava = lerp(cell, vc * (1.2 + 0.6 * heat), vv) * (0.85 + 0.25 * heat);
+    // the patch edge: the web frays out rather than ending on a clean line
+    float3 cooled = lerp(cell * 0.6, lava, lheat);                          // a cooling puddle's veins dim to dull red
+    float3 g = lerp(o, cooled, cover) + float3(1.0, 0.55, 0.15) * lsplash * 1.4;
     return lerp(L, lerp(o, g, up), kd);
 }
 float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, float night) {
@@ -1499,9 +1787,9 @@ float3 cyPackets(float3 rd, float dist, float t) {
     float3 acc = cy0.rgb, hot = lerp(acc, float3(1.0, 1.0, 1.0), 0.7);
     float3 L = 0;
     float3 cam = c5.xyz;
-    float2 base = floor(cam.xz / 12.0);
-    [loop] for (int k = 0; k < 25; ++k) {
-        float2 cid = base + float2(k % 5 - 2, k / 5 - 2);
+    float2 base = floor(cam.xz / 12.0 - 0.5);                        // the 4x4 cells round you
+    [loop] for (int k = 0; k < 16; ++k) {
+        float2 cid = base + float2(k % 4 - 1, k / 4 - 1);
         float  h1 = frac(sin(dot(cid, float2(127.1, 311.7))) * 43758.5453);
         float  h2 = frac(h1 * 71.3 + 0.17), h3 = frac(h1 * 13.9 + 0.71);
         if (h3 > 0.8 * cy1.x + 0.2) continue;
@@ -1512,6 +1800,9 @@ float3 cyPackets(float3 rd, float dist, float t) {
         float3 head = float3((cid.x + (axX ? s / 12.0 : h1)) * 12.0, y, (cid.y + (axX ? h2 : s / 12.0)) * 12.0) - cam;
         float3 dir = axX ? float3(sign(sp), 0, 0) : float3(0, 0, sign(sp));
         float  fade = smoothstep(0.0, 1.0, s) * smoothstep(12.0, 11.0, s);  // no pop at the cell's ends
+        float3 mid = head - dir * 0.7;                                      // (perf: a cheap reject before the segment maths)
+        float  tm = dot(mid, rd);
+        if (tm < 0.0 || dot(rd * tm - mid, rd * tm - mid) > 1.2) continue;
         // the tail: a segment behind the head; the head: a little glowing cube (a soft box)
         float3 a = head, b = head - dir * 1.4;
         float3 ab = b - a;
@@ -1547,6 +1838,355 @@ float3 cyIntro(float3 L, int2 px, float age) {
     return L;
 }
 
+// [Cute World] kawaii faces (Fernando: "make it doable in Hive" ... "at least 10 faces at random, and they change when
+// they're hit - startled, shy or mad"). BF sends each nearby player's / mob's head yaw, real height, which face is
+// theirs (0-11, from its id) and a reaction while it is just hurt. Drawn on the front face of the head in face units
+// (x right, y up, -1..1). 12 faces: 0 sparkle + w, 1 happy ^^ + D, 2 wink + tongue, 3 >< + o, 4 heart eyes, 5 star
+// eyes, 6 sleepy, 7 uwu, 8 teary sparkle, 9 dot eyes + :3, 10 OwO, 11 smug. Reactions: 1 startled O_O + sweat drop,
+// 2 shy (eyes aside, big blush, wavy mouth), 3 mad (brows, >< , fang, anger mark).
+float kwSeg(float2 p, float2 a, float2 b) { float2 pa = p - a, ba = b - a; float h = saturate(dot(pa, ba) / dot(ba, ba)); return length(pa - ba * h); }
+float kwArc(float2 p, float2 c, float r, float up) {          // an arc of a circle: up = 1 the top half (^), -1 the bottom (u)
+    float2 q = p - c; float d = abs(length(q) - r);
+    return q.y * up > -0.25 * r ? d : 9.0;
+}
+float kwHeart(float2 p) { p.y -= 0.05; p.x = abs(p.x); float d = length(p - float2(0.06, 0.05)) - 0.075; return min(d, max(-p.y - 0.12 + p.x * 1.1, 0.0) + (p.y < 0.05 ? max(p.x - 0.13 - p.y * 0.9, 0.0) : 9.0)); }
+float kwStar(float2 p, float r) { float a = atan2(p.x, p.y), k = 6.2831853 / 5.0; a = fmod(a + 7.0 * k, k) - k * 0.5; float l = length(p); return l * cos(a) * 0.0 + (l - r * (0.55 + 0.45 * pow(abs(cos(a * 2.5)), 6.0))); }
+static float gKwAA = 0.01;   // half a screen pixel, in face units (set per face): edges soften by exactly that much
+void kwPaint(inout float3 c, float d, float w, float3 col) { float e = max(w * 0.15, gKwAA); c = lerp(c, col, 1.0 - smoothstep(w * 0.85 - e, w * 0.85 + e, d)); }
+void kwSparkleEye(inout float3 c, float2 q, float s, float2 look, float lid) {
+    float2 eq = q / float2(0.24, 0.34) / s;
+    float r = length(eq);
+    if (r > 1.15) return;
+    float3 iris = lerp(lerp(float3(0.10, 0.06, 0.30), cu0.rgb, 0.35), float3(0.55, 0.85, 1.0), saturate(-q.y * 2.0 + 0.3));
+    float3 ec = r > 0.92 ? float3(0.06, 0.03, 0.10) : iris;
+    if (q.y > 0.22 * s && r > 0.8) ec = float3(0.03, 0.02, 0.06);
+    float pr = length((q - look) / float2(0.10, 0.15) / s);
+    ec = lerp(ec, float3(0.04, 0.02, 0.10), smoothstep(1.0, 0.85, pr));
+    float h1 = length(q - look - float2(-0.07, 0.11) * s) / (0.07 * s), h2 = length(q - look - float2(0.06, -0.13) * s) / (0.035 * s);
+    ec = lerp(ec, float3(1.0, 1.0, 1.0), max(smoothstep(1.0, 0.8, h1), smoothstep(1.0, 0.75, h2)));
+    float a = smoothstep(1.12, 1.0, r) * (q.y < (1.0 - lid) * 0.34 * s ? 1.0 : 0.0);   // lid: the top part closed
+    c = lerp(c, ec, a);
+    if (lid > 0.01) kwPaint(c, abs(q.y - (1.0 - lid) * 0.34 * s) + max(abs(q.x) - 0.24 * s, 0.0), 0.03, float3(0.06, 0.03, 0.10));
+}
+// ---- round 2 (Fernando's references: thick top lashes with a flick, layered irises, big highlights, striped blush,
+// spiral / blank panic eyes, waterfall tears, chibi rage with red marks, a pout with an anger mark). Original faces in
+// those anime styles - no characters.
+float kwTop(float x) { return 0.30 * sqrt(saturate(1.0 - (x / 0.23) * (x / 0.23))); }
+// an anime eye at q (eye units), side -1 left / +1 right (the outer corner), s scale, iris colour, lid 0 open .. 1 shut,
+// look: iris offset, star: a 4-point sparkle, tear: a wet glossy rim
+void animeEye(inout float3 c, float2 q, float side, float s, float3 irisC, float lid, float2 look, float star, float tear) {
+    q /= s;
+    float3 ink = float3(0.09, 0.03, 0.07);
+    float topY = lerp(0.30, -0.04, lid);
+    float r = length(q / float2(0.23, 0.30));
+    if (r < 1.0 && q.y < topY) {
+        float3 col = float3(0.98, 0.97, 1.0);
+        float2 iq = (q - look) / float2(0.175, 0.26);
+        float ir = length(iq);
+        if (ir < 1.0) {
+            float3 ic = lerp(irisC * 0.22, irisC, smoothstep(0.65, -0.25, iq.y));                       // dark at the top
+            ic = lerp(ic, lerp(irisC, float3(1.0, 1.0, 1.0), 0.5), smoothstep(-0.35, -0.85, iq.y) * smoothstep(1.0, 0.65, ir));   // light lower crescent
+            ic = lerp(ic, irisC * 0.12, smoothstep(0.82, 1.0, ir));                                   // dark rim
+            float pr = length((q - look - float2(0.0, 0.03)) / float2(0.075, 0.13));
+            ic = lerp(ic, float3(0.04, 0.02, 0.06), smoothstep(1.0, 0.8, pr));
+            col = ic;
+        }
+        float h1 = length(q - look - float2(-0.065, 0.10)) / 0.07, h2 = length(q - look - float2(0.07, -0.13)) / 0.032;
+        col = lerp(col, float3(1.0, 1.0, 1.0), max(smoothstep(1.0, 0.82, h1), smoothstep(1.0, 0.7, h2)));
+        if (star > 0.5) {
+            float2 sq = q - look - float2(0.035, -0.01);
+            float st = min(abs(sq.x) * 7.0 + abs(sq.y) * 1.3, abs(sq.y) * 7.0 + abs(sq.x) * 1.3);
+            col = lerp(col, float3(1.0, 0.88, 0.96), smoothstep(0.30, 0.18, st));
+        }
+        if (tear > 0.0) col = lerp(col, float3(0.78, 0.93, 1.0), tear * smoothstep(0.7, 0.97, r) * smoothstep(-0.05, -0.5, q.y));
+        c = lerp(c, col, smoothstep(1.0, 0.95, r));
+        if (q.y < 0.0) kwPaint(c, abs(r - 1.0) * 0.2, 0.010, ink * 1.4);                            // thin lower line
+    }
+    // the top lash: a thick band riding the lid, a flick at the outer corner, a fine crease above
+    float lx = clamp(q.x, -0.24, 0.24);
+    float ly = min(kwTop(lx), topY);
+    if (abs(q.x) < 0.25) kwPaint(c, abs(q.y - ly - 0.012) - 0.026 * (1.0 - 0.4 * abs(q.x) / 0.25), 0.01, ink);
+    float ey = min(kwTop(0.205), topY);
+    kwPaint(c, kwSeg(q, float2(side * 0.20, ey), float2(side * 0.33, ey + 0.08)) - 0.018, 0.008, ink);
+    if (lid < 0.3) kwPaint(c, abs(length((q - float2(0.0, -0.06)) / float2(0.27, 0.43)) - 1.0) * 0.27 + max(-q.y + 0.25, 0.0) * 9.0, 0.007, ink * 1.8);
+}
+void kwBrow(inout float3 c, float2 f, float tilt, float y) {          // tilt > 0: angry (inner end down), < 0: worried
+    [unroll] for (int e = -1; e <= 1; e += 2) {
+        float2 a = float2(float(e) * 0.70, y + tilt * 0.10), b = float2(float(e) * 0.18, y - tilt * 0.10);
+        kwPaint(c, kwSeg(f, a, b) - 0.02, 0.012, float3(0.09, 0.03, 0.07));
+    }
+}
+void kwBlush(inout float3 c, float2 f, float k, int style) {           // 0 strokes, 1 stripes, 2 white ticks
+    [unroll] for (int b = -1; b <= 1; b += 2) {
+        float2 bq = float2(f.x - float(b) * 0.55, f.y + 0.40) / float2(0.25, 0.13);
+        c = lerp(c, float3(1.0, 0.48, 0.60), exp(-dot(bq, bq) * 1.3) * k);
+        float2 lq = f - float2(float(b) * 0.55, -0.40);
+        if (style == 1 && abs(lq.x) < 0.17 && abs(lq.y) < 0.07) c = lerp(c, float3(0.85, 0.25, 0.35), 0.6 * step(0.5, frac(lq.y * 30.0)));
+        [unroll] for (int l = 0; l < 3; ++l) {
+            float2 sq = lq - float2((float(l) - 1.0) * 0.08, 0.0);
+            if (style == 0) kwPaint(c, abs(sq.x + sq.y * 0.5) + max(abs(sq.y) - 0.055, 0.0), 0.016, float3(0.80, 0.25, 0.35));
+            if (style == 2 && l < 2) kwPaint(c, abs(sq.x + 0.04) + max(abs(sq.y) - 0.05, 0.0), 0.014, float3(1.0, 1.0, 1.0));
+        }
+    }
+}
+void kwOpenMouth(inout float3 c, float2 m, float w, float h, float wob) {   // a big open mouth: dark inside, pink tongue
+    float an = atan2(m.y, m.x);
+    float d = length(m / float2(w, h)) - 1.0 + wob * sin(an * 9.0 + c2.w * 30.0) * 0.12;
+    if (d < 0.0) c = lerp(float3(0.30, 0.04, 0.08), float3(1.0, 0.55, 0.62), smoothstep(-0.25 * h, -0.55 * h, m.y));
+    kwPaint(c, abs(d) * min(w, h), 0.012, float3(0.09, 0.03, 0.07));
+}
+void kwTears(inout float3 c, float2 f, float t) {                      // waterfall tears
+    [unroll] for (int e = -1; e <= 1; e += 2) {
+        float x0 = float(e) * 0.42 + float(e) * 0.06;
+        float yy = f.y + 0.22;
+        if (yy > 0.0 || yy < -0.85) continue;
+        float x = x0 + 0.035 * sin(yy * 18.0 + t * 9.0);
+        float d = abs(f.x - x) - (0.055 + 0.02 * sin(yy * 30.0 - t * 14.0));
+        if (d < 0.0) c = lerp(float3(0.60, 0.82, 1.0), float3(0.95, 0.99, 1.0), smoothstep(-0.03, -0.0, d) * 0.0 + 0.5 + 0.5 * sin(yy * 40.0 - t * 20.0));
+        kwPaint(c, abs(d), 0.008, float3(0.35, 0.55, 0.85));
+    }
+}
+float3 kawaiiFaceCombat(float3 c, float2 f, int combat, float2 L, float2 R, float2 m, float3 ink, float t) {
+    int cf = combat - 1;
+    if (cf == 0 || cf == 1) {                                           // STARTLED
+        kwBlush(c, f, 0.6, 0);
+        if (cf == 0) {                                                  // spiral eyes, wobbly scream
+            [unroll] for (int e = 0; e < 2; ++e) {
+                float2 q = e == 0 ? L : R; float r = length(q);
+                if (r < 0.24) { float a = atan2(q.y, q.x) / 6.2831853; float sp = frac(r * 10.0 - a - t * 3.0); c = lerp(float3(1.0, 1.0, 1.0), ink, smoothstep(0.30, 0.18, abs(sp - 0.5))); }
+                kwPaint(c, abs(r - 0.24), 0.02, ink);
+            }
+            kwOpenMouth(c, m + float2(0.0, -0.02), 0.20, 0.13, 1.0);
+            [unroll] for (int s2 = -1; s2 <= 1; s2 += 2) { float2 w = f - float2(float(s2) * 0.88, 0.0); kwPaint(c, abs(w.x - 0.03 * sin(w.y * 40.0)) + max(abs(w.y) - 0.2, 0.0), 0.012, ink); }   // shake lines
+        } else {                                                        // blank white O_O, a sweat drop
+            [unroll] for (int e = 0; e < 2; ++e) { float2 q = e == 0 ? L : R; kwPaint(c, length(q) - 0.25, 0.02, float3(1.0, 1.0, 1.0)); kwPaint(c, abs(length(q) - 0.25), 0.022, ink); }
+            kwOpenMouth(c, m, 0.15, 0.11, 0.0);
+            float2 sd = f - float2(-0.80, 0.55);
+            kwPaint(c, length(sd / float2(1.0, 1.5)) - 0.08 + max(sd.y, 0.0) * 0.7, 0.012, float3(0.6, 0.85, 1.0));
+        }
+        return c;
+    }
+    if (cf == 2 || cf == 3) {                                           // SHY / TEARY
+        kwBlush(c, f, 0.9, 0);
+        kwBrow(c, f, -0.8, 0.46);
+        if (cf == 2) {                                                  // trembling teary pout
+            animeEye(c, L, -1.0, 1.0, float3(0.20, 0.25, 0.55), 0.1, float2(0.0, -0.03), 0.0, 1.0);
+            animeEye(c, R,  1.0, 1.0, float3(0.20, 0.25, 0.55), 0.1, float2(0.0, -0.03), 0.0, 1.0);
+            kwPaint(c, kwArc(m, float2(0.0, -0.09), 0.10, 1.0), 0.016, ink);
+        } else {                                                        // waterfall crying
+            [unroll] for (int e = 0; e < 2; ++e) kwPaint(c, abs((e == 0 ? L : R).y + 0.02 * cos((e == 0 ? L : R).x * 14.0)) + max(abs((e == 0 ? L : R).x) - 0.22, 0.0), 0.04, ink);
+            kwTears(c, f, t);
+            kwPaint(c, abs(m.y - 0.03 * sin(m.x * 45.0)) + max(abs(m.x) - 0.15, 0.0), 0.016, ink);
+        }
+        return c;
+    }
+    if (cf == 4) {                                                      // glare, pout, anger mark
+        kwBrow(c, f, 1.0, 0.46);
+        animeEye(c, L, -1.0, 0.95, float3(0.55, 0.15, 0.15), 0.35, 0, 0.0, 0.0);
+        animeEye(c, R,  1.0, 0.95, float3(0.55, 0.15, 0.15), 0.35, 0, 0.0, 0.0);
+        kwBlush(c, f, 0.6, 0);
+        kwPaint(c, min(kwArc(m - float2(0.0, 0.045), 0, 0.045, -1.0), kwArc(m - float2(0.0, -0.045), 0, 0.045, -1.0)) + (m.x < -0.01 ? 9.0 : 0.0), 0.016, ink);
+        float2 am = f - float2(0.68, 0.70);
+        kwPaint(c, min(min(kwArc(am, float2(0.08, 0.08), 0.07, -1.0), kwArc(am, float2(-0.08, 0.08), 0.07, -1.0)), min(kwArc(am, float2(0.08, -0.08), 0.07, 1.0), kwArc(am, float2(-0.08, -0.08), 0.07, 1.0))), 0.028, float3(0.92, 0.12, 0.2));
+        return c;
+    }
+    if (cf == 5) {                                                      // > < shouting, fang, a puff of steam
+        kwBlush(c, f, 0.8, 1); kwBrow(c, f, 1.0, 0.50);
+        kwPaint(c, min(kwSeg(L, float2(-0.18, 0.12), float2(0.14, 0.0)), kwSeg(L, float2(0.14, 0.0), float2(-0.18, -0.12))), 0.045, ink);
+        kwPaint(c, min(kwSeg(R, float2(0.18, 0.12), float2(-0.14, 0.0)), kwSeg(R, float2(-0.14, 0.0), float2(0.18, -0.12))), 0.045, ink);
+        kwOpenMouth(c, m + float2(0.0, 0.02), 0.20, 0.14, 0.0);
+        [unroll] for (int k = 0; k < 3; ++k) { float2 sp = f - float2(0.78 + 0.08 * sin(t * 5.0 + float(k)), 0.55 + frac(t * 1.5 + float(k) / 3.0) * 0.4); kwPaint(c, abs(length(sp) - 0.06), 0.015, float3(0.95, 0.95, 1.0)); }
+        return c;
+    }
+    if (cf == 6) {                                                      // x_x knocked out
+        kwBlush(c, f, 0.5, 0);
+        [unroll] for (int e = 0; e < 2; ++e) { float2 q = e == 0 ? L : R; kwPaint(c, min(kwSeg(q, float2(-0.15, 0.15), float2(0.15, -0.15)), kwSeg(q, float2(-0.15, -0.15), float2(0.15, 0.15))), 0.045, ink); }
+        kwPaint(c, abs(m.y - 0.02 * sin(m.x * 50.0)) + max(abs(m.x) - 0.14, 0.0), 0.016, ink);
+        [unroll] for (int k = 0; k < 3; ++k) { float a = t * 3.0 + float(k) * 2.094; float2 sp = f - float2(cos(a) * 0.55, 0.78 + sin(a) * 0.10); kwPaint(c, kwStar(sp, 0.08), 0.01, float3(1.0, 0.85, 0.3)); }
+        return c;
+    }
+    if (cf == 7) {                                                      // nervous: shrunk pupils, wobbly smile, sweat
+        kwBlush(c, f, 0.5, 0); kwBrow(c, f, -0.6, 0.48);
+        [unroll] for (int e = 0; e < 2; ++e) { float2 q = e == 0 ? L : R; kwPaint(c, length(q / float2(0.85, 1.0)) - 0.22, 0.02, float3(1.0, 1.0, 1.0)); kwPaint(c, abs(length(q / float2(0.85, 1.0)) - 0.22), 0.02, ink); kwPaint(c, length(q - float2(0.03 * sin(t * 30.0), 0.0)) - 0.035, 0.01, ink); }
+        kwPaint(c, abs(m.y - 0.04 * sin(m.x * 38.0)) + max(abs(m.x) - 0.18, 0.0), 0.016, ink);
+        [unroll] for (int k = 0; k < 2; ++k) { float2 sd = f - float2(-0.78 + 0.12 * float(k), 0.60 - 0.18 * float(k)); kwPaint(c, length(sd / float2(1.0, 1.5)) - 0.07 + max(sd.y, 0.0) * 0.7, 0.012, float3(0.6, 0.85, 1.0)); }
+        return c;
+    }
+    if (cf == 8) {                                                      // starstruck: huge sparkly eyes, open mouth, sparkles round
+        kwBlush(c, f, 0.8, 2);
+        animeEye(c, L, -1.0, 1.15, float3(0.75, 0.35, 0.95), 0.0, 0, 1.0, 0.6); animeEye(c, R, 1.0, 1.15, float3(0.75, 0.35, 0.95), 0.0, 0, 1.0, 0.6);
+        kwOpenMouth(c, m + float2(0.0, 0.01), 0.12, 0.12, 0.0);
+        [unroll] for (int k = 0; k < 4; ++k) { float2 sp = f - float2((k < 2 ? -0.82 : 0.82), 0.55 - 0.35 * float(k & 1)); float tw = 0.7 + 0.3 * sin(t * 8.0 + float(k) * 2.0); float st = min(abs(sp.x) * 6.0 + abs(sp.y) * 1.2, abs(sp.y) * 6.0 + abs(sp.x) * 1.2); kwPaint(c, st - 0.35 * tw, 0.05, float3(1.0, 0.95, 0.6)); }
+        return c;
+    }
+    if (cf == 9) {                                                      // gritted teeth
+        kwBlush(c, f, 0.6, 1); kwBrow(c, f, 1.0, 0.48);
+        animeEye(c, L, -1.0, 0.9, float3(0.75, 0.2, 0.1), 0.45, 0, 0.0, 0.0); animeEye(c, R, 1.0, 0.9, float3(0.75, 0.2, 0.1), 0.45, 0, 0.0, 0.0);
+        float2 tq = m / float2(0.20, 0.07); float d = max(abs(tq.x), abs(tq.y)) - 1.0;
+        if (d < 0.0) c = float3(1.0, 1.0, 1.0);
+        kwPaint(c, abs(d) * 0.07, 0.008, ink);
+        if (d < 0.0) { kwPaint(c, abs(m.y), 0.006, ink); kwPaint(c, abs(frac(m.x / 0.05) - 0.5) * 0.05, 0.004, ink); }
+        return c;
+    }
+    if (cf == 10) {                                                     // wailing: shut eyes, big crying mouth, waterfall
+        kwBlush(c, f, 0.9, 1); kwBrow(c, f, -0.9, 0.48);
+        kwPaint(c, kwArc(L, float2(0, 0.10), 0.16, -1.0), 0.035, ink); kwPaint(c, kwArc(R, float2(0, 0.10), 0.16, -1.0), 0.035, ink);
+        kwTears(c, f, t);
+        kwOpenMouth(c, m + float2(0.0, 0.0), 0.18, 0.15, 0.5);
+        return c;
+    }
+    {                                                                   // 11: puffed cheeks pout
+        kwBrow(c, f, 0.8, 0.48);
+        [unroll] for (int b = -1; b <= 1; b += 2) { float2 pq = (f - float2(float(b) * 0.45, -0.40)) / float2(0.30, 0.22); c = lerp(c, float3(1.0, 0.55, 0.65), smoothstep(1.0, 0.7, length(pq)) * 0.8); kwPaint(c, abs(length(pq) - 1.0) * 0.22, 0.01, float3(0.75, 0.3, 0.4)); }
+        animeEye(c, L, -1.0, 0.9, float3(0.3, 0.55, 0.9), 0.3, float2(0.04, 0.0), 0.0, 0.3); animeEye(c, R, 1.0, 0.9, float3(0.3, 0.55, 0.9), 0.3, float2(0.04, 0.0), 0.0, 0.3);
+        kwPaint(c, length(m / float2(1.0, 1.2)) - 0.035, 0.01, float3(0.75, 0.2, 0.3));
+        return c;
+    }
+}
+float3 kawaiiFaceNormal(float3 c, float2 f, int face, float2 L, float2 R, float2 m, float3 ink, float t) {
+    float3 irisCols[6] = { float3(0.25, 0.45, 0.95), float3(0.55, 0.30, 0.12), float3(0.85, 0.45, 0.10), float3(0.60, 0.12, 0.15), float3(0.18, 0.22, 0.60), float3(0.55, 0.25, 0.85) };
+    float3 ic = irisCols[face % 6];
+    if (face == 0) {        // gentle: soft smile
+        kwBlush(c, f, 0.75, 0); animeEye(c, L, -1.0, 1.0, ic, 0.12, 0, 1.0, 0.0); animeEye(c, R, 1.0, 1.0, ic, 0.12, 0, 1.0, 0.0);
+        kwPaint(c, kwArc(m, float2(0.0, 0.07), 0.09, -1.0), 0.013, ink);
+    } else if (face == 1) { // excited: star sparkle, big open mouth, white ticks
+        kwBlush(c, f, 0.6, 2); animeEye(c, L, -1.0, 1.05, ic, 0.0, 0, 1.0, 0.0); animeEye(c, R, 1.0, 1.05, ic, 0.0, 0, 1.0, 0.0);
+        kwBrow(c, f, -0.15, 0.50); kwOpenMouth(c, m + float2(0.0, 0.02), 0.20, 0.15, 0.0);
+    } else if (face == 2) { // happy tongue, striped blush
+        kwBlush(c, f, 0.7, 1); animeEye(c, L, -1.0, 1.0, ic, 0.0, float2(0.02, 0.0), 0.0, 0.0); animeEye(c, R, 1.0, 1.0, ic, 0.0, float2(-0.02, 0.0), 0.0, 0.0);
+        { float d = max(length(m / float2(0.13, 0.15)) - 1.0, m.y - 0.01); if (d < 0.0) c = float3(1.0, 0.55, 0.62); kwPaint(c, abs(d) * 0.13, 0.010, ink); }
+    } else if (face == 3) { // smug: half lids, brows in, little triangle mouth
+        kwBlush(c, f, 0.6, 0); kwBrow(c, f, 0.9, 0.42);
+        animeEye(c, L, -1.0, 1.0, ic, 0.38, 0, 0.0, 0.0); animeEye(c, R, 1.0, 1.0, ic, 0.38, 0, 0.0, 0.0);
+        { float2 tq = m - float2(0.0, -0.01); float d = max(max(-tq.y - 0.04, tq.y * 0.6 + abs(tq.x) - 0.05), 0.0) + max(max(-tq.y - 0.04, tq.y * 0.6 + abs(tq.x) - 0.05), -1.0) * 0.0;
+          float tri = max(-tq.y - 0.045, abs(tq.x) * 1.4 + tq.y - 0.05); if (tri < 0.0) c = float3(0.82, 0.30, 0.32); kwPaint(c, abs(tri), 0.008, ink); }
+    } else if (face == 4) { // hopeful teary
+        kwBlush(c, f, 0.7, 0); kwBrow(c, f, -0.7, 0.48);
+        animeEye(c, L, -1.0, 1.08, ic, 0.0, float2(0.0, 0.02), 1.0, 0.8); animeEye(c, R, 1.0, 1.08, ic, 0.0, float2(0.0, 0.02), 1.0, 0.8);
+        kwPaint(c, kwArc(m, float2(0.0, 0.04), 0.06, -1.0), 0.012, ink);
+    } else if (face == 5) { // ^^ + w
+        kwBlush(c, f, 0.75, 0);
+        kwPaint(c, kwArc(L, float2(0, -0.08), 0.17, 1.0), 0.035, ink); kwPaint(c, kwArc(R, float2(0, -0.08), 0.17, 1.0), 0.035, ink);
+        float ww = abs(abs(m.x) - 0.07); kwPaint(c, abs(m.y - (0.035 - ww * ww * 6.0)) + max(abs(m.x) - 0.15, 0.0), 0.018, ink);
+    } else if (face == 6) { // tsundere: shut eyes, pout, brows in
+        kwBlush(c, f, 0.85, 0); kwBrow(c, f, 0.6, 0.44);
+        [unroll] for (int e = -1; e <= 1; e += 2) { float2 q = e == -1 ? L : R; kwPaint(c, kwArc(q, float2(0, 0.10), 0.18, -1.0), 0.03, ink); kwPaint(c, kwSeg(q, float2(float(e) * 0.17, 0.0), float2(float(e) * 0.26, 0.05)), 0.02, ink); }
+        kwPaint(c, min(kwArc(m - float2(0.0, 0.045), 0, 0.045, -1.0), kwArc(m - float2(0.0, -0.045), 0, 0.045, -1.0)) + (m.x < -0.01 ? 9.0 : 0.0), 0.016, ink);
+    } else if (face == 7) { // heart eyes
+        kwBlush(c, f, 0.75, 1);
+        kwPaint(c, kwHeart(L * 0.55), 0.02, float3(1.0, 0.25, 0.5)); kwPaint(c, kwHeart(R * 0.55), 0.02, float3(1.0, 0.25, 0.5));
+        kwPaint(c, abs(kwHeart(L * 0.55)), 0.012, ink * 2.0); kwPaint(c, abs(kwHeart(R * 0.55)), 0.012, ink * 2.0);
+        kwPaint(c, length(L * 0.55 - float2(-0.05, 0.08)) - 0.025, 0.01, float3(1.0, 1.0, 1.0)); kwPaint(c, length(R * 0.55 - float2(-0.05, 0.08)) - 0.025, 0.01, float3(1.0, 1.0, 1.0));
+        kwOpenMouth(c, m + float2(0.0, 0.02), 0.12, 0.09, 0.0);
+    } else if (face == 8) { // starry
+        kwBlush(c, f, 0.6, 2);
+        kwPaint(c, kwStar(L, 0.25), 0.02, float3(1.0, 0.85, 0.30)); kwPaint(c, kwStar(R, 0.25), 0.02, float3(1.0, 0.85, 0.30));
+        kwPaint(c, abs(kwStar(L, 0.25)), 0.015, ink); kwPaint(c, abs(kwStar(R, 0.25)), 0.015, ink);
+        kwOpenMouth(c, m + float2(0.0, 0.02), 0.17, 0.13, 0.0);
+    } else if (face == 9) { // sleepy
+        kwBlush(c, f, 0.6, 0);
+        animeEye(c, L, -1.0, 1.0, ic, 0.8, 0, 0.0, 0.0); animeEye(c, R, 1.0, 1.0, ic, 0.8, 0, 0.0, 0.0);
+        float2 z = f - float2(0.72, 0.68);
+        kwPaint(c, min(min(kwSeg(z, float2(-0.07, 0.07), float2(0.07, 0.07)), kwSeg(z, float2(0.07, 0.07), float2(-0.07, -0.07))), kwSeg(z, float2(-0.07, -0.07), float2(0.07, -0.07))), 0.02, ink);
+        kwPaint(c, abs(length(m / float2(1.0, 1.25)) - 0.04), 0.014, ink);
+    } else if (face == 10) { // dot eyes :3
+        kwBlush(c, f, 0.8, 0);
+        kwPaint(c, length(L / float2(1.0, 1.4)) - 0.07, 0.015, ink); kwPaint(c, length(R / float2(1.0, 1.4)) - 0.07, 0.015, ink);
+        kwPaint(c, length(L - float2(-0.02, 0.04)) - 0.02, 0.008, float3(1.0, 1.0, 1.0)); kwPaint(c, length(R - float2(-0.02, 0.04)) - 0.02, 0.008, float3(1.0, 1.0, 1.0));
+        kwPaint(c, min(kwArc(m - float2(-0.05, 0.0), 0, 0.05, -1.0), kwArc(m - float2(0.05, 0.0), 0, 0.05, -1.0)), 0.018, ink);
+    } else if (face == 11) { // wink + tongue
+        kwBlush(c, f, 0.75, 1);
+        animeEye(c, L, -1.0, 1.0, ic, 0.0, 0, 1.0, 0.0);
+        kwPaint(c, kwArc(R, float2(0, -0.06), 0.17, 1.0), 0.03, ink);
+        kwPaint(c, kwArc(m, float2(0, 0.06), 0.11, -1.0), 0.016, ink);
+        { float2 tq = m - float2(0.05, -0.07); float d = length(tq / float2(1.0, 1.2)) - 0.055; if (d < 0.0 && tq.y < 0.04) c = float3(1.0, 0.50, 0.58); }
+    } else if (face == 12) { // cat: sparkle eyes, :3, whiskers
+        kwBlush(c, f, 0.7, 0); animeEye(c, L, -1.0, 1.0, float3(0.35, 0.75, 0.35), 0.0, 0, 1.0, 0.0); animeEye(c, R, 1.0, 1.0, float3(0.35, 0.75, 0.35), 0.0, 0, 1.0, 0.0);
+        kwPaint(c, min(kwArc(m - float2(-0.05, 0.0), 0, 0.05, -1.0), kwArc(m - float2(0.05, 0.0), 0, 0.05, -1.0)), 0.016, ink);
+        [unroll] for (int w2 = 0; w2 < 4; ++w2) { float sx = w2 < 2 ? -1.0 : 1.0; float dy = (float(w2 & 1) - 0.5) * 0.10; kwPaint(c, kwSeg(f, float2(sx * 0.60, -0.40 + dy), float2(sx * 0.92, -0.36 + dy * 2.0)), 0.012, ink); }
+    } else if (face == 13) { // blep: dot eyes, tongue out
+        kwBlush(c, f, 0.75, 0);
+        kwPaint(c, length(L / float2(1.0, 1.3)) - 0.08, 0.015, ink); kwPaint(c, length(R / float2(1.0, 1.3)) - 0.08, 0.015, ink);
+        kwPaint(c, length(L - float2(-0.025, 0.04)) - 0.022, 0.008, float3(1.0, 1.0, 1.0)); kwPaint(c, length(R - float2(-0.025, 0.04)) - 0.022, 0.008, float3(1.0, 1.0, 1.0));
+        kwPaint(c, kwSeg(m, float2(-0.06, 0.03), float2(0.06, 0.03)), 0.012, ink);
+        { float2 tq = m - float2(0.0, -0.03); float d = max(length(tq / float2(1.0, 1.3)) - 0.06, tq.y - 0.05); if (d < 0.0) c = float3(1.0, 0.5, 0.58); kwPaint(c, abs(d), 0.008, ink); }
+    } else if (face == 14) { // flustered: eyes aside, big blush, tiny wavy mouth
+        kwBlush(c, f, 1.0, 1); kwBrow(c, f, -0.5, 0.48);
+        animeEye(c, L, -1.0, 1.0, float3(0.85, 0.35, 0.55), 0.15, float2(0.07, -0.04), 0.0, 0.4); animeEye(c, R, 1.0, 1.0, float3(0.85, 0.35, 0.55), 0.15, float2(0.07, -0.04), 0.0, 0.4);
+        kwPaint(c, abs(m.y - 0.02 * sin(m.x * 60.0)) + max(abs(m.x) - 0.08, 0.0), 0.012, ink);
+    } else if (face == 15) { // content: closed u u, soft smile
+        kwBlush(c, f, 0.7, 0);
+        kwPaint(c, kwArc(L, float2(0, 0.08), 0.16, -1.0), 0.03, ink); kwPaint(c, kwArc(R, float2(0, 0.08), 0.16, -1.0), 0.03, ink);
+        kwPaint(c, kwArc(m, float2(0.0, 0.07), 0.09, -1.0), 0.014, ink);
+    } else if (face == 16) { // amazed: sparkly eyes, little o
+        kwBlush(c, f, 0.6, 2); animeEye(c, L, -1.0, 1.1, float3(0.2, 0.75, 0.85), 0.0, float2(0.0, 0.03), 1.0, 0.0); animeEye(c, R, 1.0, 1.1, float3(0.2, 0.75, 0.85), 0.0, float2(0.0, 0.03), 1.0, 0.0);
+        kwPaint(c, abs(length(m / float2(1.0, 1.25)) - 0.05), 0.016, ink);
+    } else if (face == 17) { // sly cat smirk with a fang
+        kwBlush(c, f, 0.55, 0); kwBrow(c, f, 0.4, 0.46);
+        animeEye(c, L, -1.0, 1.0, float3(0.95, 0.75, 0.15), 0.42, float2(-0.04, 0.0), 0.0, 0.0); animeEye(c, R, 1.0, 1.0, float3(0.95, 0.75, 0.15), 0.42, float2(-0.04, 0.0), 0.0, 0.0);
+        kwPaint(c, kwArc(m - float2(0.04, 0.0), float2(0.0, 0.06), 0.09, -1.0), 0.014, ink);
+        { float2 fq = m - float2(0.06, -0.025); float d = max(max(-fq.y - 0.045, fq.y), abs(fq.x) - 0.02 * (1.0 + fq.y / 0.045)); kwPaint(c, d, 0.004, float3(1.0, 1.0, 1.0)); }
+    } else if (face == 18) { // tears of joy: ^^ with happy tears, big grin
+        kwBlush(c, f, 0.8, 0);
+        kwPaint(c, kwArc(L, float2(0, -0.08), 0.16, 1.0), 0.035, ink); kwPaint(c, kwArc(R, float2(0, -0.08), 0.16, 1.0), 0.035, ink);
+        [unroll] for (int e = 0; e < 2; ++e) kwPaint(c, length(((e == 0 ? L : R) - float2(e == 0 ? -0.20 : 0.20, -0.14)) / float2(1.0, 1.4)) - 0.045, 0.01, float3(0.6, 0.88, 1.0));
+        kwOpenMouth(c, m + float2(0.0, 0.03), 0.17, 0.12, 0.0);
+    } else if (face == 19) { // wink with a heart
+        kwBlush(c, f, 0.75, 0); animeEye(c, L, -1.0, 1.0, float3(0.95, 0.35, 0.55), 0.0, 0, 1.0, 0.0);
+        kwPaint(c, kwArc(R, float2(0, -0.06), 0.17, 1.0), 0.03, ink);
+        kwPaint(c, kwHeart((f - float2(0.78, 0.30)) * 2.6), 0.03, float3(1.0, 0.3, 0.55));
+        kwPaint(c, kwArc(m, float2(0.0, 0.07), 0.09, -1.0), 0.014, ink);
+    } else if (face == 20) { // derp: one big eye, one small, tongue
+        kwBlush(c, f, 0.6, 0);
+        animeEye(c, L, -1.0, 1.0, float3(0.45, 0.65, 0.25), 0.0, 0, 0.0, 0.0); animeEye(c, R, 1.0, 1.0, float3(0.45, 0.65, 0.25), 0.0, 0, 0.0, 0.0);
+        kwPaint(c, kwArc(m, float2(0.0, 0.06), 0.10, -1.0), 0.014, ink);
+        { float2 tq = m - float2(-0.05, -0.07); float d = length(tq / float2(1.0, 1.3)) - 0.05; if (d < 0.0 && tq.y < 0.04) c = float3(1.0, 0.50, 0.58); }
+    } else {                 // 21: kissy - closed eyes, 3 lips, a heart floating
+        kwBlush(c, f, 0.85, 1);
+        kwPaint(c, kwArc(L, float2(0, 0.08), 0.15, -1.0), 0.03, ink); kwPaint(c, kwArc(R, float2(0, 0.08), 0.15, -1.0), 0.03, ink);
+        kwPaint(c, min(kwArc(m - float2(0.0, 0.04), 0, 0.04, -1.0), kwArc(m - float2(0.0, -0.04), 0, 0.04, -1.0)) + (m.x < -0.01 ? 9.0 : 0.0), 0.016, float3(0.75, 0.15, 0.3));
+        float hy = frac(t * 0.6); kwPaint(c, kwHeart((f - float2(0.35, -0.35 + hy * 0.9)) * 3.0), 0.05, lerp(float3(1.0, 0.3, 0.55), c, hy * hy));
+    }
+    return c;
+}
+float3 kawaiiFace(float3 c, float2 f, int face, int combat, float seed) {
+    float3 ink = float3(0.09, 0.03, 0.07);
+    float  t = c2.w;
+    float2 L = float2(f.x + 0.43, f.y + 0.02) / 1.35, R = float2(f.x - 0.43, f.y + 0.02) / 1.35;   // big anime eyes
+    float2 m = float2(f.x, f.y + 0.52) / 1.5;
+    return combat > 0 ? kawaiiFaceCombat(c, f, combat, L, R, m, ink, t) : kawaiiFaceNormal(c, f, face, L, R, m, ink, t);
+}
+float3 cuteEyes(float3 o, float3 P) {
+    int n = min(int(aInfo.x + 0.5), 24);
+    [loop] for (int i = 0; i < n; ++i) {
+        if (aDim[i].z < 0.5) continue;
+        float code = aDim[i].z - 1.0;
+        float fresh = code >= 9999.5 ? 1.0 : 0.0; code -= fresh * 10000.0;
+        int   react = int(floor(code / 100.0 + 0.01)), face = int(fmod(code, 100.0) + 0.5) % 22;
+        float realH = fmod(aDim[i].w, 1000.0);
+        bool  player = aDim[i].w >= 999.0;
+        float hs = player ? 0.25 : clamp(realH * 0.16, 0.16, 0.30);
+        float3 hc = aPos[i].xyz + float3(0, 0.1 + realH + (player ? 0.075 : 0.0) - hs, 0);   // (a player model stands 1.875, its box 1.8)
+        float3 lp = P - hc;
+        if (dot(lp, lp) > 0.6) continue;
+        float yaw = aDim[i].y;
+        float3 fwd = float3(-sin(yaw), 0, cos(yaw)), side = float3(cos(yaw), 0, sin(yaw));
+        float z = dot(lp, fwd), x = dot(lp, side) / hs, y = lp.y / hs;
+        if (z < hs * 0.80 || z > hs * 1.25 || abs(x) > 1.0 || abs(y) > 1.0) continue;   // only the front face
+        if (fresh > 0.5) { float2 j = float2(sin(c2.w * 60.0), cos(c2.w * 47.0)) * 0.03; x += j.x; y += j.y; }   // a shake right after a hit   // a little shake
+        // (quality pass, Fernando: "pixelated, low res") 4x rotated-grid supersampling of the face, edges softened by
+        // the real pixel size: smooth up close and far away
+        float fpx = length(P) * 2.0 * c1.w / c4.y / hs;           // one screen pixel, in face units
+        gKwAA = fpx * 0.5;
+        float3 accF = 0;
+        [unroll] for (int ss = 0; ss < 4; ++ss) {
+            float2 off = (ss == 0 ? float2(0.125, 0.375) : ss == 1 ? float2(-0.375, 0.125) : ss == 2 ? float2(0.375, -0.125) : float2(-0.125, -0.375)) * fpx;
+            accF += kawaiiFace(o, float2(x, y) + off, face, react, float(i));
+        }
+        o = accF * 0.25;
+    }
+    return o;
+}
 // ---- [Purxiy] Cute World: a soft pastel world with drifting hearts and little sparkles. Original code.
 float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
     float soft = saturate(cu0.w);
@@ -1555,6 +2195,7 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
     float3 pastel = lerp(L, lumC * float3(1.0, 0.84, 0.95) + 0.12, 0.42 * cu1.z) * (0.94 + 0.08 * soft);
     pastel = lerp(pastel, sqrt(max(pastel, 0.0)) * 0.95, 0.25 * soft);
     float3 o = lerp(L, pastel, cu1.z > 0.0 ? 1.0 : 0.0);
+    [branch] if (!sky && cu1.w > 1.5) o = cuteEyes(o, P);
     // hearts drifting up in the air around you (a few per cell of a 3-block grid, depth-tested)
     float3 hl = 0;
     [unroll] for (int k = 1; k <= 4; ++k) {   // (2026-11-19: bigger, glossier, more of them - they were specks)
@@ -1709,6 +2350,8 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float3 nq  = cross(ddx(q), ddy(q));                       // the surface's facing, from the depth around this pixel
     float  upN = abs(nq.y) / max(length(nq), 1e-9);
     [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t, upN, rd);
+    [branch] if (fx6.w > 0.5 && fx3.w > 0.0 && !sky) ambL += rippleEdge(int2(px), q, zc);
+    [branch] if (inkInfo.x > 0.5 && !sky) ambL += inkPuddles(q, upN, t);
     [branch] if (cs0.w > 0.0 || au0.w > 0.0 || ha0.w > 0.0) ambL += cosmetics(q, rd, sky ? 1e4 : dist, sky, t);
     float4 overC = 0;                                        // [Purxiy] wings / cape cloth over the world
     float capeT = 1e9;
@@ -1758,7 +2401,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     }
     [branch] if (wx1.w > 0.5 && wx0.x > 1.5 && wx1.y > 0.0) {
         if (!sky) outL = lavaGround(outL, int2(px), q, rd, dist, t);
-        else outL = outL * float3(0.8, 0.7, 0.75) + float3(0.35, 0.07, 0.01) * exp(-max(rd.y, 0.0) * 9.0) * wx1.y;   // the sky glows red low down
+        else outL = outL * float3(0.92, 0.88, 0.9) + float3(0.12, 0.025, 0.005) * exp(-max(rd.y, 0.0) * 12.0) * wx1.y;   // the sky glows red low down
     }
     [branch] if (wx1.w > 0.5) outL += weather(rd, sky ? 1e4 : dist, t, night);
     float3 o = sqrt(max(outL + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
