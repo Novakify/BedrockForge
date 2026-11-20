@@ -1851,7 +1851,8 @@ float kwArc(float2 p, float2 c, float r, float up) {          // an arc of a cir
 }
 float kwHeart(float2 p) { p.y -= 0.05; p.x = abs(p.x); float d = length(p - float2(0.06, 0.05)) - 0.075; return min(d, max(-p.y - 0.12 + p.x * 1.1, 0.0) + (p.y < 0.05 ? max(p.x - 0.13 - p.y * 0.9, 0.0) : 9.0)); }
 float kwStar(float2 p, float r) { float a = atan2(p.x, p.y), k = 6.2831853 / 5.0; a = fmod(a + 7.0 * k, k) - k * 0.5; float l = length(p); return l * cos(a) * 0.0 + (l - r * (0.55 + 0.45 * pow(abs(cos(a * 2.5)), 6.0))); }
-void kwPaint(inout float3 c, float d, float w, float3 col) { c = lerp(c, col, 1.0 - smoothstep(w * 0.7, w, d)); }
+static float gKwAA = 0.01;   // half a screen pixel, in face units (set per face): edges soften by exactly that much
+void kwPaint(inout float3 c, float d, float w, float3 col) { float e = max(w * 0.15, gKwAA); c = lerp(c, col, 1.0 - smoothstep(w * 0.85 - e, w * 0.85 + e, d)); }
 void kwSparkleEye(inout float3 c, float2 q, float s, float2 look, float lid) {
     float2 eq = q / float2(0.24, 0.34) / s;
     float r = length(eq);
@@ -2173,7 +2174,16 @@ float3 cuteEyes(float3 o, float3 P) {
         float z = dot(lp, fwd), x = dot(lp, side) / hs, y = lp.y / hs;
         if (z < hs * 0.80 || z > hs * 1.25 || abs(x) > 1.0 || abs(y) > 1.0) continue;   // only the front face
         if (fresh > 0.5) { float2 j = float2(sin(c2.w * 60.0), cos(c2.w * 47.0)) * 0.03; x += j.x; y += j.y; }   // a shake right after a hit   // a little shake
-        o = kawaiiFace(o, float2(x, y), face, react, float(i));
+        // (quality pass, Fernando: "pixelated, low res") 4x rotated-grid supersampling of the face, edges softened by
+        // the real pixel size: smooth up close and far away
+        float fpx = length(P) * 2.0 * c1.w / c4.y / hs;           // one screen pixel, in face units
+        gKwAA = fpx * 0.5;
+        float3 accF = 0;
+        [unroll] for (int ss = 0; ss < 4; ++ss) {
+            float2 off = (ss == 0 ? float2(0.125, 0.375) : ss == 1 ? float2(-0.375, 0.125) : ss == 2 ? float2(0.375, -0.125) : float2(-0.125, -0.375)) * fpx;
+            accF += kawaiiFace(o, float2(x, y) + off, face, react, float(i));
+        }
+        o = accF * 0.25;
     }
     return o;
 }
