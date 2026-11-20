@@ -1190,9 +1190,14 @@ float3 weather(float3 rd, float dist, float t, float night) {
 // Now ~22 px at blur 0.5, and a nearer sample only counts if its own blur reaches this pixel (gather-as-scatter).
 float bokehCoc(float z, float zf, int mode, int2 p) {
     if (mode == 2) return smoothstep(bk0.z * 0.5, 0.5, abs(float(p.y) / c4.y - 0.55));   // tilt-shift: a sharp band across the screen
-    float rel = (z - zf) / max(zf, 0.5);
-    if (bk1.y < 0.5 && rel < 0.0) rel = 0.0;
-    return smoothstep(bk0.z * 0.6, bk0.z * 0.6 + 0.8, abs(rel));
+    // (Fernando 2026-11-20: "I don't even know what bokeh is trying to do, everything just looks blurry". With the
+    //  focus on a player 3 blocks away everything past ~4 blocks went fully blurry, and the focus jumped with the
+    //  crosshair.) Now: what you look at and everything near it stays sharp - at least the first 12 blocks, more with
+    //  "how much stays sharp" - and only the far background melts, gradually, into soft light; near blur is mild.
+    float zS = max(zf * (1.0 + 3.0 * bk0.z), 8.0 + 24.0 * bk0.z);
+    float far = smoothstep(zS, zS * 3.5, z);
+    float nearB = bk1.y > 0.5 ? smoothstep(zf * 0.45, zf * 0.15, z) * 0.6 : 0.0;
+    return max(far, nearB);
 }
 float3 bokeh(int2 p, float z, bool sky) {
     int mode = int(bk0.x + 0.5);
