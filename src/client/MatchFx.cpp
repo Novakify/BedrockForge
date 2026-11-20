@@ -789,6 +789,21 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
 } // namespace
 
 namespace {
+// [Cute World] who just got hit: your own hits (noteHit) and anyone whose health dropped - their face reacts for 0.7 s
+struct HurtMark { uint64_t rid = 0; int64_t at = 0; float hp = -1.f; uint32_t salt = 0; };
+HurtMark gHurt[32]{};
+HurtMark* hurtSlot(uint64_t rid, bool make) {
+    HurtMark* old = &gHurt[0];
+    for (auto& h : gHurt) { if (h.rid == rid) return &h; if (h.at < old->at) old = &h; }
+    if (!make) return nullptr;
+    *old = HurtMark{rid, 0, -1.f, 0};
+    return old;
+}
+}   // namespace
+namespace bedrock_forge::client::matchfx {
+void noteHit(uint64_t rid) { if (auto* h = hurtSlot(rid, true)) { h->at = nowMs(); ++h->salt; } }
+}
+namespace {
 BfBlurActorsV1   gBlurActors[2]{};
 std::atomic<int> gBlurActorsCur{0};
 uint32_t         gBlurActorsFrame = 0;
@@ -821,6 +836,21 @@ void blurActorsFrame(LocalPlayer& lp, bool cuteOn) {
                 // [Cute World] where its face points (head yaw, radians) and its real box, so RF can paint anime eyes on it
                 try { e.pad[0] = a->getRotation().y * 3.14159265f / 180.0f; e.pad[1] = 1.0f; } catch (...) { e.pad[1] = 0.0f; }
                 e.pad[2] = (bb.max.y - bb.min.y) + (player ? 1000.0f : 0.0f);   // real height (+1000: a player)
+                if (cuteOn && e.pad[1] > 0.5f) {   // which face (one of 12, stays theirs) + a reaction while just hurt (1 startled, 2 shy, 3 mad)
+                    uint64_t rid = 0;
+                    try { rid = uint64_t(a->getRuntimeID().rawID); } catch (...) {}
+                    uint64_t hsh = rid * 0x9E3779B97F4A7C15ull;
+                    int const face = int((hsh >> 33) % 12ull);
+                    HurtMark* hm = hurtSlot(rid, true);
+                    try {
+                        float const hp = float(a->getHealth());
+                        if (hm->hp >= 0.f && hp < hm->hp - 0.01f) { hm->at = nowMs(); ++hm->salt; }
+                        hm->hp = hp;
+                    } catch (...) {}
+                    int react = 0;
+                    if (hm->at > 0 && nowMs() - hm->at < 700) react = 1 + int(((hsh >> 17) + hm->salt * 2654435761ull) % 3ull);
+                    e.pad[1] = 1.0f + float(face) + 100.0f * float(react);
+                }
             }
     } catch (...) { o.count = 0; }
     gBlurActorsCur.store(w, std::memory_order_release);
