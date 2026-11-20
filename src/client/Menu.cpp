@@ -307,6 +307,7 @@ struct Hit {
     std::string mod;  // module row: a middle click pins / unpins it
 };
 float gActionX = 0; // design-px x of the click being handled (sliders)
+float gActionY = 0; // ...and y (the colour picker)
 bool inside(float px, float py, float x, float y, float w, float h) { return px >= x && px < x + w && py >= y && py < y + h; }
 
 struct UiFrame {
@@ -531,6 +532,58 @@ void slider(UiFrame& f, std::string const& id, float x, float y, float w, std::s
     if (gDrag == id && gHeld) set(f.mx); // dragging
 }
 
+// [BF] Custom colour picker (Fernando 2026-11-20: "every custom colour only shows a slider with numbers and adjusting it
+// does nothing - we need a colour wheel"). One widget for the three custom_* settings: a saturation x brightness field
+// in the chosen hue, a rainbow hue bar under it, and a swatch. Touching it also switches the module's Palette / Colour
+// choice to "Custom" (the sliders did nothing before because the palette was still on Accent).
+Rgb hsvRgb(float h, float sv, float v) {
+    h = std::fmod(std::max(h, 0.f), 360.f) / 60.f;
+    float const c = v * sv, x = c * (1.f - std::fabs(std::fmod(h, 2.f) - 1.f)), lo = v - c;
+    float r = 0, g = 0, b = 0;
+    if (h < 1) r = c, g = x; else if (h < 2) r = x, g = c; else if (h < 3) g = c, b = x; else if (h < 4) g = x, b = c; else if (h < 5) r = x, b = c; else r = c, b = x;
+    return Rgb{int((r + lo) * 255.f + 0.5f), int((g + lo) * 255.f + 0.5f), int((b + lo) * 255.f + 0.5f)};
+}
+constexpr float kPickerH = 196;
+void colorPicker(UiFrame& f, Module* m, float x, float y, float w, float a) {
+    Setting* hue = m->setting("custom_hue"); Setting* sat = m->setting("custom_sat"); Setting* val = m->setting("custom_bright");
+    if (!hue) return;
+    auto& g = f.g;
+    row(f, x, y, w, kPickerH, "Custom colour", "Pick any colour - it is used as soon as you touch it", a);
+    float const H = hue->value, S = sat ? sat->value : 0.8f, V = val ? val->value : 1.f;
+    float const fx = x + 14, fy = y + 40, fw = w - 28 - 64, fh = 104;   // the field
+    constexpr int NX = 24, NY = 10;
+    for (int j = 0; j < NY; ++j)
+        for (int i = 0; i < NX; ++i) {
+            float const s0 = (i + 0.5f) / NX, v0 = 1.f - (j + 0.5f) / NY;
+            g.solid(fx + fw * i / NX, fy + fh * j / NY, fw / NX + 0.6f, fh / NY + 0.6f, 0, rgba(hsvRgb(H, s0, 0.2f + 0.8f * v0), 1), a, 0, true);
+        }
+    float const vMin = val ? val->min : 0.2f;
+    float const kx = fx + fw * std::clamp(S, 0.f, 1.f), ky = fy + fh * (1.f - std::clamp((V - 0.2f) / 0.8f, 0.f, 1.f));
+    g.solid(kx - 8, ky - 8, 16, 16, 8, rgba(kWhite, 1), a, 0, true);
+    g.solid(kx - 5, ky - 5, 10, 10, 5, rgba(hsvRgb(H, S, V), 1), a, 0, true);
+    float const hx = fx, hy = fy + fh + 14, hw = fw, hh = 14;          // the hue bar
+    constexpr int NH = 36;
+    for (int i = 0; i < NH; ++i) g.solid(hx + hw * i / NH, hy, hw / NH + 0.6f, hh, 0, rgba(hsvRgb(360.f * (i + 0.5f) / NH, 1, 1), 1), a, 0, true);
+    float const hk = hx + hw * std::clamp(H / 360.f, 0.f, 1.f);
+    g.solid(hk - 4, hy - 4, 8, hh + 8, 4, rgba(kWhite, 1), a, 0, true);
+    g.solid(fx + fw + 14, fy, 50, fh + 28, 10, rgba(hsvRgb(H, S, V), 1), a, 0, true);   // the swatch
+    auto toCustom = [m] {
+        for (auto& s : m->settings)
+            if (!s.choices.empty() && s.choices.back() == "Custom" && (s.id == "palette" || s.id == "tint" || s.id == "colour" || s.id == "color")) s.value = float(s.choices.size() - 1);
+    };
+    std::string const idF = m->id + "/picker_field", idH = m->id + "/picker_hue";
+    auto setF = [=](float px, float py) {
+        if (sat) sat->value = std::clamp((px - fx) / fw, 0.f, 1.f);
+        if (val) val->value = std::clamp(0.2f + 0.8f * (1.f - (py - fy) / fh), std::max(vMin, 0.2f), 1.f);
+        toCustom(); Registry::get().save();
+    };
+    auto setH = [=](float px) { hue->value = std::clamp((px - hx) / hw, 0.f, 1.f) * 360.f; toCustom(); Registry::get().save(); };
+    f.hits.push_back({fx, fy, fw, fh, [setF](bool) { setF(gActionX, gActionY); }, idF});
+    f.hits.push_back({hx, hy - 6, hw, hh + 12, [setH](bool) { setH(gActionX); }, idH});
+    if (gHeld && gDrag == idF) setF(f.mx, f.my);
+    if (gHeld && gDrag == idH) setH(f.mx);
+}
+
 // [Prism] a choice (style, palette, design...) as tap-to-pick pills, not a slider that snaps between options
 void segmented(UiFrame& f, float x, float y, float w, std::string const& title, std::string const& desc, float& value,
                std::vector<std::string> const& names, float a, std::function<void()> const& changed) {
@@ -739,6 +792,12 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     }
     for (auto& s : m->settings) {
         Setting* sp = &s;
+        if (s.id == "custom_sat" || s.id == "custom_bright") continue;   // (part of the colour picker)
+        if (s.id == "custom_hue") {
+            if (sc.fits(kPickerH)) colorPicker(f, m, x, sc.y, wd, a);
+            sc.y += kPickerH + 10;
+            continue;
+        }
         if (s.kind == Setting::Kind::Toggle) {
             if (sc.fits(50)) toggleRow(f, x, sc.y, wd, s.label, settingHelp(m->id, s.id), s.on, a, [sp] { sp->on = !sp->on; Registry::get().save(); });
             sc.y += 60;
@@ -1312,6 +1371,7 @@ void render(ScreenView& view) {
                     break;
                 }
                 gActionX = cx;
+                gActionY = cy;
                 if (!it->drag.empty()) gDrag = it->drag; // keeps following the pointer while the button is held
                 if (it->action) it->action(c.right);
                 break;
