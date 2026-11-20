@@ -499,8 +499,12 @@ bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
     if (gFl.blend < 0.01f && !gFl.on) { gFl.blend = 0; gFl.reach = -1; gFl.haveEye = false; gFlActive = false; return false; }
     gFlActive = true;
     if (gFl.on) {   // what the mouse did since the last frame goes to the camera; your look goes back
-        gFl.offYaw  += std::remainder(r.y - gFl.lockYaw, 360.0f);
-        gFl.offPitch = std::clamp(gFl.offPitch + (r.x - gFl.lockPitch), -89.0f - gFl.lockPitch, 89.0f - gFl.lockPitch);
+        float const dYaw = std::remainder(r.y - gFl.lockYaw, 360.0f), dPit = r.x - gFl.lockPitch;
+        if (std::fabs(dYaw) > 45.0f || std::fabs(dPit) > 45.0f) { gFl.lockYaw = r.y; gFl.lockPitch = r.x; }   // the server set your look (respawn / teleport): not a mouse move
+        else {
+            gFl.offYaw  += dYaw;
+            gFl.offPitch = std::clamp(gFl.offPitch + dPit, -89.0f - gFl.lockPitch, 89.0f - gFl.lockPitch);
+        }
         r.x = gFl.lockPitch; r.y = gFl.lockYaw;
         (*rotc->mRotPrev).x = gFl.lockPitch; (*rotc->mRotPrev).y = gFl.lockYaw;
         if (head) { head->mYHeadRot = gFl.lockYaw; head->mYHeadRotO = gFl.lockYaw; }
@@ -520,7 +524,14 @@ bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
         glm::vec3 const hit = collideCamera(actor, eyeS, eyeS - f * wantD);
         reach = std::max(0.0f, glm::length(hit - eyeS) - 0.1f);
     }
-    gFl.reach = gFl.reach < 0 || reach < gFl.reach ? reach : gFl.reach + (reach - gFl.reach) * k;
+    // (Fernando 2026-11-20: "freelook goes bonkers when I move my mouse": orbiting past the floor / a wall the camera
+    //  snapped in at once and crept back out, frame after frame - it pumped. Now both ways are eased: in fast (25 ms,
+    //  still in front of the wall within a frame or two), out slow (180 ms), and tiny changes are ignored.)
+    if (gFl.reach < 0) gFl.reach = reach;
+    else if (std::fabs(reach - gFl.reach) > 0.04f) {
+        float const tau = reach < gFl.reach ? 0.025f : 0.18f;
+        gFl.reach += (reach - gFl.reach) * (1.0f - std::exp(-dt / tau));
+    }
     glm::vec3 const cam = eyeS - f * gFl.reach;
     p.pos[0] = cam.x; p.pos[1] = cam.y; p.pos[2] = cam.z;
     p.yaw = yaw; p.pitch = pitch; p.roll = 0;
