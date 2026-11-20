@@ -1,0 +1,78 @@
+{
+ "format_version": "1.8.0",
+ "render_controllers": {
+  "controller.render.bfk_knife": {
+   "arrays": {
+    "geometries": {
+     "Array.kgeo": [
+      "Geometry.karambit",
+      "Geometry.balisong",
+      "Geometry.dagger"
+     ]
+    },
+    "textures": {
+     "Array.ktex": [
+      "Texture.karambit",
+      "Texture.karambit_blackout",
+      "Texture.karambit_gold",
+      "Texture.karambit_fade",
+      "Texture.balisong",
+      "Texture.balisong_blackout",
+      "Texture.balisong_gold",
+      "Texture.balisong_fade",
+      "Texture.dagger",
+      "Texture.dagger_blackout",
+      "Texture.dagger_gold",
+      "Texture.dagger_fade"
+     ]
+    }
+   },
+   "geometry": "Array.kgeo[v.bfk - 1]",
+   "materials": [
+    {
+     "*": "(v.is_enchanted && v.bfk_glint) ? Material.enchanted : Material.default"
+    }
+   ],
+   "textures": [
+    "Array.ktex[(v.bfk - 1) * 4 + v.bfk_fin]",
+    "Texture.enchanted"
+   ]
+  },
+  "controller.render.bfk_ghost": {
+   "arrays": {
+    "geometries": {
+     "Array.ggeo": [
+      "Geometry.karambit_ghost",
+      "Geometry.balisong_ghost",
+      "Geometry.dagger_ghost"
+     ]
+    },
+    "textures": {
+     "Array.gtex": [
+      "Texture.karambit_ghost",
+      "Texture.karambit_blackout_ghost",
+      "Texture.karambit_gold_ghost",
+      "Texture.karambit_fade_ghost",
+      "Texture.balisong_ghost",
+      "Texture.balisong_blackout_ghost",
+      "Texture.balisong_gold_ghost",
+      "Texture.balisong_fade_ghost",
+      "Texture.dagger_ghost",
+      "Texture.dagger_blackout_ghost",
+      "Texture.dagger_gold_ghost",
+      "Texture.dagger_fade_ghost"
+     ]
+    }
+   },
+   "geometry": "Array.ggeo[v.bfk - 1]",
+   "materials": [
+    {
+     "*": "Material.ghost"
+    }
+   ],
+   "textures": [
+    "Array.gtex[(v.bfk - 1) * 4 + v.bfk_fin]"
+   ]
+  }
+ }
+}

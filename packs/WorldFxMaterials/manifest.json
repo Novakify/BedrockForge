@@ -1,0 +1,29 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "World FX Materials",
+    "description": "by Novak - Bedrock Forge World FX material ids (looks vanilla)",
+    "uuid": "9453eb52-13f6-429d-b43d-f3a0ae48c0ad",
+    "version": [
+      0,
+      1,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "0c88ea02-1c8b-4620-860b-cb3dfecd3d6a",
+      "version": [
+        0,
+        1,
+        0
+      ]
+    }
+  ]
+}

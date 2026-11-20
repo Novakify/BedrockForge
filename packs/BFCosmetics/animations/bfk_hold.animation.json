@@ -1,0 +1,129 @@
+{
+ "format_version": "1.10.0",
+ "animations": {
+  "animation.bfk.ghost_hide": {
+   "loop": true,
+   "bones": {
+    "bfg1": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg2": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg3": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg4": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg5": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg6": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg7": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg8": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg9": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg10": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg11": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    },
+    "bfg12": {
+     "position": [
+      0,
+      -1000,
+      0
+     ]
+    }
+   }
+  },
+  "animation.bfk.hold_first_person": {
+   "loop": true,
+   "bones": {
+    "wfx_item": {
+     "position": [
+      -4.65,
+      0.8,
+      -1.0
+     ],
+     "rotation": [
+      150.0,
+      0.0,
+      -12.0
+     ],
+     "scale": 0.55
+    }
+   }
+  },
+  "animation.bfk.hold_third_person": {
+   "loop": true,
+   "bones": {
+    "wfx_item": {
+     "position": [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     "rotation": [
+      90.0,
+      15.0,
+      90.0
+     ]
+    }
+   }
+  }
+ }
+}
