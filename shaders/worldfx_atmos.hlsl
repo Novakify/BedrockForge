@@ -1120,11 +1120,11 @@ float3 radFlame(float3 B, float Hh, float3 rd, float dist, float t, float3 col, 
     if (steep <= 0.0 || dist < sc - 1.0) return L;
     float  front = (dist < sc - 0.2 ? 0.5 : 1.0) * steep;
     float  spd = max(rad1.z, 0.2);
-    float  top = Hh + 0.55;
+    float  top = Hh + 0.85;
     float  prof = y < Hh * 0.85 ? body * (0.85 + 0.15 * saturate((y + 0.1) / 0.8)) : body * pow(saturate((top - y) / (top - Hh * 0.85)), 0.8);
     float  n1 = ascFbm(float2(ax * 2.4 + 3.0 + seed, y * 1.7 - t * 3.0 * spd));
     float  up = saturate((y - 0.5) / 1.4);
-    float  R = (prof + body * (0.30 * (n1 - 0.5) + pow(saturate(n1 - 0.5), 1.5) * 0.9 * up)) * saturate((top + 0.2 - y) / 0.5);
+    float  R = (prof + body * (0.35 * (n1 - 0.5) + pow(saturate(n1 - 0.45), 1.4) * 1.6 * up)) * saturate((top + 0.5 - y) / 0.6);
     float  f = (R - ax) / body;
     float  lowF = saturate((y + 0.1) / 0.4) * smoothstep(top, top - 0.6, y);   // (no hairline point at the top)
     if (f > -1.2) {
@@ -1174,30 +1174,35 @@ float3 radiance(int2 p, float3 P, float zc) {
         if (tc < 0.5 || tc > 64.0) continue;   // (perf audit: no outline work past 64 blocks)
         float3 off = rdv * tc - cc;
         float  pxPerBlock = c4.y / max(tc, 0.5) * 0.9;                    // rough screen size of a block there
-        float  reach = 18.0 * sc / pxPerBlock;                            // the glow's reach, in blocks
+        float  reach = 0.8;                                               // the flames reach, in blocks
         if (pxPerBlock * Hh < 10.0) continue;                                // (perf audit 2: specks too small to outline)
         if (abs(off.y) > Hh * 0.5 + 0.4 + reach || length(off.xz) > 0.55 + reach) continue;
-        // (round 5, Fernando: "half-ass version of theirs, plain and dull, not glowy". Their clip, close up: a thick
-        //  near-white line hugging the outside of the silhouette, then a lilac glow fading out ~20 px - and the body
-        //  itself untouched.) Outside the body: the distance (in px) to the nearest body pixel, searched on 12 rays x
-        //  6 rings; a hot core where it is ~0-4 px, the colour glow falling off past it.
-        if (radIn(p, i, dist + 0.01) > 0.5) continue;
-        float dmin = 99.0;
+        // (round 6, Fernando: "it literally looks like fluid flames - super fluid glow, realistic fire flames, like a
+        //  calmer Ascension, not pixelated") Outside the body: how far this pixel is from the silhouette (searched on
+        //  12 rays x 8 rings, ring radii dithered per pixel so there are no bands), and whether the body is BELOW it.
+        //  Flames: a field of rising noise (advected upward in block units) decides how far the fire reaches here -
+        //  tall licking tongues over the head and shoulders, a thinner sheet up the sides - white-hot at the skin,
+        //  the colour through the body of the flame, fading at the tips. Smooth everywhere.
+        // the fire itself: the smooth Ascension-style flame shell, rising tongues (analytic - no pixel steps)
+        bool onB = radIn(p, i, dist + 0.01) > 0.5;
+        L += radFlame(aPos[i].xyz + float3(0, 0.1, 0), Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37) * (1.1 + 0.6 * rad1.x) * (onB ? 0.25 : 1.0);
+        // and where the fire meets the body: a white-hot rim hugging the real silhouette (fine rings, a few px)
+        if (onB) continue;
+        float dmin = 1e3;
+        float edgePx = 7.0 * sc;
         [unroll] for (int k = 0; k < 12; ++k) {
             float a = float(k) * 0.5235988 + 0.26;
             float2 dir = float2(cos(a), sin(a));
-            [unroll] for (int r = 0; r < 8; ++r) {
-                float rr = r == 0 ? 1.0 : r == 1 ? 2.0 : r == 2 ? 3.2 : r == 3 ? 4.8 : r == 4 ? 7.0 : r == 5 ? 10.0 : r == 6 ? 14.0 : 19.0;
+            [unroll] for (int r = 0; r < 4; ++r) {
+                float rr = edgePx * (0.25 + 0.25 * float(r));
                 if (rr >= dmin) break;
-                if (radIn(p + int2(dir * rr * sc), i, dist - 0.15) > 0.5) { dmin = rr; break; }
+                if (radIn(p + int2(dir * rr), i, dist - 0.15) > 0.5) { dmin = rr; break; }
             }
         }
-        if (dmin > 90.0) continue;
-        float3 col = rad0.rgb, hot = lerp(rad0.rgb, float3(1, 1, 1), 0.78);
-        float  pulse = 0.9 + 0.1 * sin(t * 2.2 * max(rad1.z, 0.2) + float(i));
-        float  core = exp(-pow(dmin / 4.4, 2.0));
-        float  glow = exp(-dmin / 10.0);
-        L += (hot * core * (2.2 + 1.2 * rad1.x) + col * glow * (1.8 + 2.0 * rad1.x)) * pulse;
+        if (dmin > 999.0) continue;
+        float3 hot = lerp(rad0.rgb, float3(1, 1, 1), 0.8);
+        float  core = exp(-pow(dmin / (0.45 * edgePx), 2.0));
+        L += hot * core * (1.5 + rad1.x) + rad0.rgb * exp(-dmin / edgePx) * 0.6;
     }
     return L;
 }
