@@ -1103,6 +1103,13 @@ void publishDirector(MusicState const& m, CinemaOut const& c) {
         for (int k = 0; k < 3; ++k) d.sky[k] = f[k] / mx;
         d.skyAmount = std::clamp(gS->sky.frame().visible, 0.0f, 1.0f);
     }
+    if (gS->playerOnly) {   // (Fernando 2026-11-20: "Player only, and the sky director still changes the colour of the skies")
+        d.active = 0u; d.gradeAmount = 0; d.flash = 0; d.letterbox = 0; d.bloomBoost = 0; d.caBoost = 0; d.showcase = 0;
+        d.saturation = 1; d.contrast = 1; d.vignette = 0;
+        for (int k = 0; k < 3; ++k) d.tint[k] = 1.0f, d.worldTint[k] = 1.0f;
+        d.worldAmount = 0; d.exposure = 1; d.worldSat = 1; d.skyAmount = 0; d.coverAmount = 0; d.wordColorAmount = 0; d.drop = 0; d.finale = 0;
+        gFovScale.store(1.0f, std::memory_order_relaxed);
+    }
     gBfDirector = d;
 }
 
