@@ -66,6 +66,7 @@
 #include "client/PostFx.h"
 #include "client/ServerAuto.h"
 #include "client/MatchFx.h"
+#include "mc/legacy/ActorRuntimeID.h"
 #include "client/Cosmetics.h"
 #include "core/Win32Input.h"
 #include "lyrics/win/Win.h"
