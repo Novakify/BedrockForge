@@ -1991,8 +1991,8 @@ float3 kawaiiFaceCombat(float3 c, float2 f, int combat, float2 L, float2 R, floa
     }
     if (cf == 5) {                                                      // > < shouting, fang, a puff of steam
         kwBlush(c, f, 0.8, 1); kwBrow(c, f, 1.0, 0.50);
-        kwPaint(c, min(kwSeg(L, float2(0.18, 0.12), float2(-0.14, 0.0)), kwSeg(L, float2(-0.14, 0.0), float2(0.18, -0.12))), 0.045, ink);
-        kwPaint(c, min(kwSeg(R, float2(-0.18, 0.12), float2(0.14, 0.0)), kwSeg(R, float2(0.14, 0.0), float2(-0.18, -0.12))), 0.045, ink);
+        kwPaint(c, min(kwSeg(L, float2(-0.18, 0.12), float2(0.14, 0.0)), kwSeg(L, float2(0.14, 0.0), float2(-0.18, -0.12))), 0.045, ink);
+        kwPaint(c, min(kwSeg(R, float2(0.18, 0.12), float2(-0.14, 0.0)), kwSeg(R, float2(-0.14, 0.0), float2(0.18, -0.12))), 0.045, ink);
         kwOpenMouth(c, m + float2(0.0, 0.02), 0.20, 0.14, 0.0);
         { float2 fq = m - float2(0.08, 0.10); float d = max(max(-fq.y - 0.0, fq.y - 0.07) , abs(fq.x + fq.y * 0.3) - 0.03 * (1.0 - fq.y / 0.07)); kwPaint(c, d, 0.004, float3(1.0, 1.0, 1.0)); }
         [unroll] for (int k = 0; k < 3; ++k) { float2 sp = f - float2(0.78 + 0.08 * sin(t * 5.0 + float(k)), 0.55 + frac(t * 1.5 + float(k) / 3.0) * 0.4); kwPaint(c, abs(length(sp) - 0.06), 0.015, float3(0.95, 0.95, 1.0)); }
@@ -2138,7 +2138,7 @@ float3 kawaiiFaceNormal(float3 c, float2 f, int face, float2 L, float2 R, float2
         kwPaint(c, kwArc(m, float2(0.0, 0.07), 0.09, -1.0), 0.014, ink);
     } else if (face == 20) { // derp: one big eye, one small, tongue
         kwBlush(c, f, 0.6, 0);
-        animeEye(c, L, -1.0, 1.15, float3(0.45, 0.65, 0.25), 0.0, float2(0.05, 0.05), 0.0, 0.0); animeEye(c, R, 1.0, 0.75, float3(0.45, 0.65, 0.25), 0.0, float2(-0.04, -0.04), 0.0, 0.0);
+        animeEye(c, L, -1.0, 1.0, float3(0.45, 0.65, 0.25), 0.0, float2(0.05, 0.06), 0.0, 0.0); animeEye(c, R, 1.0, 1.0, float3(0.45, 0.65, 0.25), 0.0, float2(-0.05, -0.05), 0.0, 0.0);   // goofy: pupils looking different ways
         kwPaint(c, kwArc(m, float2(0.0, 0.06), 0.10, -1.0), 0.014, ink);
         { float2 tq = m - float2(-0.05, -0.07); float d = length(tq / float2(1.0, 1.3)) - 0.05; if (d < 0.0 && tq.y < 0.04) c = float3(1.0, 0.50, 0.58); }
     } else {                 // 21: kissy - closed eyes, 3 lips, a heart floating
