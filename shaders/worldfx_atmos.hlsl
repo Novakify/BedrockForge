@@ -1129,11 +1129,11 @@ float3 radFlame(float3 B, float Hh, float3 rd, float dist, float t, float3 col, 
     float  lowF = saturate((y + 0.1) / 0.4) * smoothstep(top, top - 0.6, y);   // (no hairline point at the top)
     if (f > -1.2) {
         float streak = pow(saturate(ascFbm(float2(x * 6.0 + seed, y * 0.8 - t * 4.2 * spd)) * 1.4 - 0.35), 2.0);
-        float dens = pow(saturate((f + 0.10) / 0.5), 1.3) * (0.25 + 0.75 * streak);
+        float dens = pow(saturate((f + 0.10) / 0.5), 1.3) * (0.10 + 0.90 * streak);
         float edge = exp(-pow((f - 0.02) / 0.15, 2.0));
         float halo = f < 0.0 ? exp(f / 0.30) : 1.0;
-        float3 hot = lerp(col, float3(1, 1, 1), 0.55);
-        L += (col * (dens * 0.40 + edge * 0.40) + hot * edge * 0.30 + col * halo * 0.16 * (0.4 + rad1.x)) * lowF * front * (0.7 + 0.6 * rad1.x);
+        float3 hot = lerp(col, float3(1, 1, 1), 0.30);
+        L += (col * (dens * 0.40 + edge * 0.40) + hot * edge * 0.30 + col * halo * 0.16 * (0.4 + rad1.x)) * lowF * front * (0.45 + 0.30 * rad1.x);
     }
     {   // a few motes rising through it
         float2 m = float2(x, y + t * 0.9 * spd) * float2(5.0, 3.0);
@@ -1193,7 +1193,7 @@ float3 radiance(int2 p, float3 P, float zc) {
         // the fire itself: the smooth Ascension-style flame shell, rising tongues (analytic - no pixel steps)
         bool onB = radIn(p, i, dist + 0.01) > 0.5;
         float hwI = aPos[i].w - (aDim[i].w > 999.0 ? 0.45 : 0.2);
-        L += radFlame(aPos[i].xyz + float3(0, 0.1, 0), Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37, hwI) * (1.1 + 0.6 * rad1.x) * (onB ? 0.25 : 1.0);
+        L += radFlame(aPos[i].xyz + float3(0, 0.1, 0), Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37, hwI) * (1.35 + 0.45 * rad1.x) * (onB ? 0.2 : 1.0);
         // and where the fire meets the body: a white-hot rim hugging the real silhouette (fine rings, a few px)
         if (onB) continue;
         float dmin = 1e3;
@@ -1210,7 +1210,7 @@ float3 radiance(int2 p, float3 P, float zc) {
         if (dmin > 999.0) continue;
         float3 hot = lerp(rad0.rgb, float3(1, 1, 1), 0.8);
         float  core = exp(-pow(dmin / (0.45 * edgePx), 2.0));
-        L += hot * core * (1.5 + rad1.x) + rad0.rgb * exp(-dmin / edgePx) * 0.6;
+        L += hot * core * (0.9 + 0.5 * rad1.x) + rad0.rgb * exp(-dmin / edgePx) * 0.45;
     }
     return L;
 }
