@@ -97,6 +97,7 @@ ByteAddressBuffer gDepth : register(t1);
 
 int2   clampPx(int2 p) { return clamp(p, int2(0, 0), int2(c4.xy) - 1); }
 float  rawDepth(int2 p) { p = clampPx(p); return float(gDepth.Load(uint(p.y) * uint(c4.w) + uint(p.x) * 4u) & 0xFFFFFFu) / 16777215.0; }
+static int2 gPx;   // the pixel being shaded (for effects that read the scene under them)
 float3 sceneAt(int2 p) {
     p = clampPx(p);
     uint  v = gScene.Load(uint(p.y) * uint(c4.z) + uint(p.x) * 4u);
@@ -321,15 +322,16 @@ float3 inkPuddles(float3 P, float upN, float t) {
             spl = min(spl, length(sl * float2(0.45 + 0.35 * h3, 1.0)) - sr * wob);   // stretched along its flight
         }
         float specks = 0.0;
-        [unroll] for (int d = 0; d < 12; ++d) {
+        [unroll] for (int d = 0; d < 20; ++d) {   // (round 7: more fine droplets, like the clip)
             float h1 = hash12b(float2(seed * 977.0, 200.0 + float(d))), h2 = hash12b(float2(seed * 977.0, 220.0 + float(d)));
-            float2 dp = float2(cos(h1 * 6.2831853), sin(h1 * 6.2831853)) * Sz * (1.2 + 2.4 * h2);
-            specks = max(specks, 1.0 - smoothstep(0.035 * Sz, 0.05 * Sz, length(q - dp)));
+            float2 dp = float2(cos(h1 * 6.2831853), sin(h1 * 6.2831853)) * Sz * (0.8 + 2.8 * h2);
+            float  sr = Sz * (0.018 + 0.04 * frac(h1 * 7.3 + h2 * 3.1));
+            specks = max(specks, 1.0 - smoothstep(sr * 0.7, sr, length(q - dp)));
         }
         float blob  = 1.0 - smoothstep(-0.01, 0.015, dm);
         float splat = 1.0 - smoothstep(-0.01, 0.015, spl);
         float ink   = max(max(blob, splat), specks);
-        float inner = max(saturate(1.0 - rq / (0.75 * Sz)), saturate(-spl / (0.06 * Sz)) * splat);   // white-hot at the core and the splats' hearts
+        float inner = pow(saturate(1.0 - rq / (0.55 * Sz)), 2.0);   // (round 7: white-hot only right at the heart - the rest keeps its colour)   // white-hot at the core and the splats' hearts
         float halo  = exp(-max(min(dm, spl), 0.0) / (0.06 * Sz)) * (1.0 - ink);   // (Fernando: no mist round it - only a tight glow hugging the ink)
         float rim   = exp(-pow(min(dm, spl) / (0.035 * Sz), 2.0));
         float gloss = 0.0;
@@ -341,8 +343,8 @@ float3 inkPuddles(float3 P, float upN, float t) {
         float  pop  = 1.0 + 1.0 * exp(-age * 5.0);
         float  pulse = 0.92 + 0.08 * sin(t * 2.0 + seed * 40.0);
         float  crk = 0.0;
-        float3 body = mode == 3 ? col * 0.10 + hot * inner * 0.35 : lerp(col, hot, pow(inner, 1.5)) * (0.8 + 0.5 * inner);
-        float3 oInk = body * (0.8 + 0.5 * fx2.w) + (mode == 3 ? col * 1.6 : hot * 0.6) * rim * ink;
+        float3 body = mode == 3 ? col * 0.10 + hot * inner * 0.35 : lerp(col, hot, inner) * (0.75 + 0.9 * inner);
+        float3 oInk = body * (0.55 + 0.35 * fx2.w) + (mode == 3 ? col * 1.6 : lerp(col, hot, 0.4) * 0.45) * rim * ink;
         float3 oHalo = col * halo * (0.55 + 0.6 * fx2.w);
         float  k = pop * pulse * fade * smoothstep(0.0, 1.1, 2.6 + dv.y);
         if (ink > 0.02 && age < topAge) { topAge = age; topC = oInk * k; topA = ink; }   // the newest lies on top
@@ -438,14 +440,14 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                     float an   = atan2(dv.y, dot(dv.xz, normalize(float2(-rd.z, rd.x) + 1e-5)));   // round the blow, as you see it
                     float rays = pow(0.5 + 0.5 * cos(an * 7.0 + seed * 40.0), 18.0) * exp(-r3 / (0.45 * Sz)) * exp(-age * 9.0);
                     float3 cc  = lerp(fx2.rgb, fx3.rgb, saturate(r3 / (0.8 * Sz)));
-                    L += (cc * (wave * 1.4 + rays * 1.2) + float3(1.0, 0.97, 0.92) * core * 2.5) * (0.5 + fx2.w) * (kind == 3 ? 1.6 : 1.0);
+                    L += (cc * (wave * 1.0 + rays * 0.9) + float3(1.0, 0.97, 0.92) * core * 0.9) * (0.5 + fx2.w) * (kind == 3 ? 1.6 : 1.0);
                 }
                 // (Purxiy reference, video 5: ~100-150 ms after the blow the whole target washes pink-white, then
                 //  clears) - the body's box round the hit point
                 float2 bxz = dv.xz;
                 if (length(bxz) < 0.5 * Sz && dv.y > -1.45 && dv.y < 0.75) {
                     float wash = exp(-pow((age - 0.12) / 0.07, 2.0));
-                    L += float3(1.0, 0.85, 1.0) * wash * 0.9 * (0.5 + fx2.w) * (kind == 3 ? 1.3 : 1.0);
+                    L += fx2.rgb * wash * 0.0;   // (round 7: the whole-body white wash was the ugly white flash - gone)
                 }
             }
             if (fx3.w > 0.0) {
@@ -471,56 +473,53 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                         Lr += (cW * (body * 2.2 + rim * 2.6) + cA * exp(-fr * 2.2) * 0.8) * k * step(fr, 2.2);
                     }
                 }
-                // (round 3, Fernando: "bland - keep it ON the body's silhouette, nothing that hides the fight".) No shell
-                // in the air any more. On the body: an energy front crawls out over the surface from the blow, a hex
-                // lattice lights up behind it and dies away cell by cell, thin arcs crackle across it; the outline of
-                // the body glows (drawn in the pass, rippleEdge()).
-                if (upN < 0.6 && length(dv.xz) < 0.75 && dv.y > -1.6 && dv.y < 0.9) {
-                    float ub = saturate(age / 0.38);
-                    float r3 = length(dv);
-                    float Rf = 1.7 * (1.0 - pow(1.0 - ub, 2.2));
-                    float fadeB = 1.0 - smoothstep(0.55, 1.0, ub);
-                    float front = exp(-pow((r3 - Rf) / 0.045, 2.0)) + 0.5 * exp(-pow((r3 - Rf) / 0.14, 2.0));
-                    // hex lattice, in the plane facing you (so it reads the same from any side)
-                    float3 rgt = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), upv = cross(rgt, rd);
-                    float2 hp = float2(dot(dv, rgt), dot(dv, upv)) / 0.06;
-                    float2 hq = float2(hp.x * 1.1547, hp.y + hp.x * 0.57735);
-                    float2 hi = floor(hq), hf = frac(hq);
-                    float  he = min(min(hf.x, hf.y), min(1.0 - hf.x, 1.0 - hf.y));
-                    he = min(he, abs(hf.x - hf.y));
-                    float  cellH = frac(sin(dot(hi, float2(127.1, 311.7))) * 43758.5453);
-                    float  behind = smoothstep(Rf, Rf - 0.08, r3) * exp(-(Rf - r3) * 3.0);
-                    float  cellOn = step(cellH, 0.55 + 0.4 * (1.0 - ub)) * behind;
-                    float  lattice = (1.0 - smoothstep(0.03, 0.10, he)) * cellOn * 1.8 + (0.45 * cellOn) * step(0.75, cellH);
-                    // arcs: thin crackling threads
-                    float nA = sin(dv.y * 23.0 + sin(dot(dv.xz, float2(17.0, 11.0)) + age * 40.0) * 2.0 + seed * 30.0);
-                    float arcs = exp(-pow(nA / 0.06, 2.0)) * exp(-r3 * 2.5) * (1.0 - smoothstep(0.0, 0.3, age)) * step(0.5, frac(age * 24.0 + seed));
-                    float wash = (1.0 - smoothstep(0.08, 0.45, age)) * smoothstep(0.0, 0.05, age) * 0.18;
-                    // (round 4, Fernando: "more dynamic, unique and dramatic on the body") a later echo wave; the front splits
-                    // into colour fringes like light through a prism; branching lightning veins race out behind the front
-                    float Re = 1.7 * (1.0 - pow(1.0 - saturate((age - 0.12) / 0.3), 2.2));
-                    float echo = exp(-pow((r3 - Re) / 0.035, 2.0)) * step(0.12, age) * 0.8;
-                    float3 prism = float3(exp(-pow((r3 - Rf - 0.05) / 0.03, 2.0)), 0.0, exp(-pow((r3 - Rf + 0.05) / 0.03, 2.0)));
-                    float2 vq = float2(dot(dv, rgt), dot(dv, upv));
-                    float va = atan2(vq.y, vq.x), vr = length(vq);
-                    float vein = 0.0;
-                    [unroll] for (int vk = 0; vk < 5; ++vk) {
-                        float base = seed * 20.0 + float(vk) * 1.2566;
-                        float wig = 0.35 * sin(vr * 14.0 + float(vk) * 3.0 + seed * 9.0) + 0.15 * sin(vr * 37.0 + float(vk));
-                        float da = atan2(sin(va - base - wig * vr), cos(va - base - wig * vr));
-                        vein += exp(-pow(da * vr / 0.012, 2.0)) * step(vr, Rf);
-                        float da2 = atan2(sin(va - base - 0.5 - wig * vr * 1.3), cos(va - base - 0.5 - wig * vr * 1.3));
-                        vein += 0.6 * exp(-pow(da2 * vr / 0.009, 2.0)) * step(0.15, vr) * step(vr, Rf * 0.8);
+                // RIPPLE round 5 (Fernando 2026-11-20 + Purxiy clip 4, 64-68 s: "more fluid, perfectly over the skin and
+                // armor"). The one you hit turns to glowing glass in the colour: the body itself (its own pixels - the
+                // skin / armour texture still reads through) washes in the colour, thin bright rings run out over its
+                // surface from the blow, a glassy sheen slides down it, then it all eases out. Only pixels of that body:
+                // inside the tight box of the actor the blow landed on, never the ground, never what is behind it.
+                [branch] if (dot(dv, dv) < 6.0 && age < 0.62) {   // (perf audit: only pixels near the blow, only while it lives)
+                    int   ai = -1; float bd = 1e9;
+                    [loop] for (int j = 0; j < min(int(aInfo.x), 24); ++j) {      // the body the blow landed on
+                        float3 dj = c - aPos[j].xyz;
+                        float  hj = clamp(fmod(aDim[j].w, 1000.0), 0.5, 3.0);
+                        float  dd2 = length(dj.xz) + max(0.0, dj.y - hj - 0.3) + max(0.0, -dj.y);
+                        if (dd2 < bd) { bd = dd2; ai = j; }
                     }
-                    vein *= (1.0 - smoothstep(0.05, 0.35, age)) * (0.7 + 0.3 * step(0.5, frac(age * 30.0 + seed)));
-                    Lr += (cW * (front * 1.6 + arcs * 1.4 + vein * 1.4) + cA * (front * 1.4 + lattice * 1.5 + arcs * 0.8 + wash + echo + vein * 1.2)
-                           + prism * float3(1.0, 0.3, 1.0) * 1.2) * fadeB;
+                    float  hB = ai >= 0 ? clamp(fmod(aDim[ai].w, 1000.0), 0.5, 3.0) : 1.8;
+                    float3 db = ai >= 0 ? P - aPos[ai].xyz : dv + float3(0, 1.3, 0);
+                    float  rB = ai >= 0 && bd < 1.0 ? 0.50 : 0.45;
+                    bool   onBody = length(db.xz) < rB && db.y > 0.16 && db.y < hB + 0.38 && (ai < 0 || bd < 1.0);
+                    float  lifeR = 0.62;
+                    if (onBody && age < lifeR) {
+                        float  u = age / lifeR;
+                        float3 sc = sceneAt(gPx); sc *= sc;
+                        float  lum = dot(sc, float3(0.3, 0.55, 0.15));
+                        float  r3 = length(dv);
+                        float  inA = smoothstep(0.0, 0.05, age), outA = 1.0 - smoothstep(0.35, 1.0, u);
+                        float  env = inA * outA;
+                        // the glass: the colour over the body, brighter where the texture is bright (it keeps its detail)
+                        float3 glass = cA * (0.12 + 2.4 * sqrt(lum)) + cIn * 0.06;
+                        // rings running out from the blow over the surface: three, thin and bright, easing out
+                        float  rings = 0.0;
+                        [unroll] for (int rk = 0; rk < 3; ++rk) {
+                            float ua = saturate((age - 0.05 * rk) / 0.42);
+                            float Rr = 1.6 * (1.0 - pow(1.0 - ua, 2.6));
+                            rings += exp(-pow((r3 - Rr) / (0.022 + 0.03 * ua), 2.0)) * (1.0 - ua) * step(0.001, ua) * (1.0 - 0.25 * rk);
+                        }
+                        // the sheen: a soft diagonal band of light sliding down the body
+                        float  sh = db.y - hB * (1.25 - 1.6 * u) + 0.35 * dot(normalize(db.xz + 1e-4), float2(rd.z, -rd.x));
+                        float  sheen = exp(-sh * sh / 0.03) * 0.8;
+                        // a quick white flash where the blow landed
+                        float  hot = exp(-r3 * r3 / 0.03) * exp(-age * 14.0);
+                        Lr += (glass * (0.55 + 0.45 * (1.0 - u)) + cW * (rings * 0.9 + sheen * 0.5 + hot * 1.5) + cA * rings * 1.3) * env;
+                    }
                 }
                 // sparks bursting off the body - kept within about a block
                 if (age < 0.4) {
                     float dist0b = length(P);
                     float3 rg2 = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), up2 = cross(rg2, rd);
-                    [unroll] for (int k = 0; k < 10; ++k) {
+                    [unroll] for (int k = 0; k < 6; ++k) {
                         float fk = float(k), h1 = frac(seed * 9.1 + fk * 0.618), h2 = frac(seed * 4.7 + fk * 0.37);
                         float a = h1 * 6.2831853;
                         float3 dirS = normalize(rg2 * cos(a) + up2 * sin(a) + away * 0.6);
@@ -1068,27 +1067,33 @@ float3 chroma(float3 c, float3 P, bool sky, float spareC) {
     float rim = 0.0;
     int n = min(int(ch1.w), 48);
     float const R2 = (ch1.x + 3.0) * (ch1.x + 3.0);
-    float3 wq = P + c5.xyz;                                        // world position: the edge pattern stays put as you move
-    float  wob = 0.55 * sin(wq.x * 1.7 + sin(wq.z * 1.3) * 1.5) + 0.45 * sin(wq.z * 2.3 + sin(wq.x * 0.9 + wq.y) * 1.2);
+    // (round 3, from Fernando's Purxiy Chroma clip, 214-226 s: "the world waits in grey" - a soft lavender grey - and
+    //  the colour comes back BLOCK BY BLOCK in a round patch that grows out from where you are and keeps growing;
+    //  every block is either back in colour or still grey (a quick pop), the patch edge a clean round staircase of
+    //  blocks with a little unevenness, never overlapping blotches.)
+    float3 wq = P + c5.xyz;
+    float3 blk = sky ? wq : floor(wq + normalize(P) * 0.02) + 0.5;      // the block this pixel belongs to
+    float3 Pb  = blk - c5.xyz;
+    float  jit = (frac(sin(dot(blk, float3(12.9898, 78.233, 37.719))) * 43758.5453) - 0.5) * 0.35;
     [loop] for (int i = 0; i < n && k < 0.999; ++i) {               // chP.w = the fade (CPU), 1 fresh .. 0 forgotten
-        float3 d = P - chP[i].xyz;
-        if (dot(d, d) > R2 * 1.6) continue;                          // too far
-        // (Fernando 2026-11-20: "renders colours in chunks, not smoothly". Each trail point was its own hard-ish disc
-        //  and the max of them showed every disc. Now each point is a wide soft falloff and they merge as a smooth
-        //  union (1 - product of what is left), so the walked path is one continuous wash of colour.)
-        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0) + wob * 0.12 * ch1.x;
-        float  e = 1.0 - smoothstep(ch1.x * 0.15, ch1.x * 1.25, r);
-        e = e * e * (3.0 - 2.0 * e);
-        rim = max(rim, chP[i].w * exp(-pow((r - ch1.x * 1.0) / (0.35 * ch1.x + 0.3), 2.0)) * 0.5);
-        k = 1.0 - (1.0 - k) * (1.0 - chP[i].w * e);
+        float3 d = Pb - chP[i].xyz;
+        if (dot(d, d) > R2 * 1.8) continue;
+        float  w  = chP[i].w;
+        float  grow = saturate((1.0 - w) * 3.0);                     // the patch grows out over the first third of its life
+        float  rr = ch1.x * (0.45 + 1.2 * grow);
+        float  r  = length(float2(d.x, d.z)) + max(abs(d.y) - 3.0, 0.0) * 0.6 + jit;
+        float  e  = 1.0 - smoothstep(rr - 0.12, rr + 0.12, r);          // a block flips within a step of the edge: crisp
+        float  a  = saturate(w * 5.0);                                  // and it holds until the very end
+        rim = max(rim, a * exp(-pow((r - rr) / 0.6, 2.0)) * (1.0 - grow * 0.6));
+        k = max(k, e * a);
     }
     float  lc   = lum3(c);
-    float3 grey = (lc * lc * 0.25 + lc * 0.75) * ch0.rgb / max(lum3(ch0.rgb), 0.05);   // a touch deeper than flat grey
+    float3 grey = (0.10 + 0.95 * lc) * ch0.rgb / max(lum3(ch0.rgb), 0.05);   // a soft, light grey in the chosen tint (the clip: pale lavender)
     float3 rich = lerp(lc.xxx, c, 1.25);                                               // fresh colour: a little richer
     float3 col  = lerp(c, max(rich, 0.0), saturate(k) * 0.6);
     float3 o    = lerp(grey, col, saturate(k));
     float3 vivid = max(lerp(lc.xxx, c, 2.2), 0.0) * 1.15 + 0.02;                      // the spreading edge, saturated and lit
-    return lerp(o, vivid, saturate(rim) * (1.0 - saturate(k)) * 0.35);   // a soft bloom of colour at the spreading edge only
+    return lerp(o, vivid, saturate(rim) * saturate(k) * 0.25);   // the blocks just turned glow a little richer
 }
 // Radiance, round 3 (Fernando 2026-11-20: "v2 looks super ugly - it should look like a lighter version of our
 // Ascension aura, not as crazy but very similar, colour customisable, glow"). Every nearby player / mob wears a soft
@@ -1141,25 +1146,57 @@ float3 radFlame(float3 B, float Hh, float3 rd, float dist, float t, float3 col, 
     }
     return L;
 }
+// Radiance round 4 (Purxiy clip 2, 11-16 s: "glowing outlines on hands, items and mobs" - a crisp light edge hugging
+// the silhouette and a soft glow spilling out round it, the body itself faintly lit; + Fernando: "like a lighter
+// Ascension") - the outline glow is the look, and soft flame licks rise through the glow (radFlame at low strength).
+float3 posAt(int2 p);
+float radIn(int2 q, int ai, float zMax) {   // 1 if pixel q is on actor ai and no farther than zMax
+    float d = rawDepth(q);
+    if (isSky(d)) return 0.0;
+    float3 w = posAt(q);
+    if (dot(w, w) > zMax * zMax) return 0.0;
+    float3 dd = w - aPos[ai].xyz;
+    float  hh = clamp(fmod(aDim[ai].w, 1000.0), 0.5, 3.0);
+    return (dd.y > 0.2 && dd.y < hh + 0.4 && length(dd.xz) < 0.55) ? 1.0 : 0.0;
+}
 float3 radiance(int2 p, float3 P, float zc) {
     int n = min(int(aInfo.x), 24);
     float3 rdv = normalize(P);
     float  dist = length(P);
     float3 L = 0;
     float  t = c2.w;
+    float  sc = max(rad0.w, 1.0) * c4.y / 1080.0;
     [loop] for (int i = 0; i < n; ++i) {
         float  Hh = clamp(fmod(aDim[i].w, 1000.0), 0.5, 3.0);
-        float3 B = aPos[i].xyz + float3(0, 0.1, 0);
-        float3 cc = B + float3(0, Hh * 0.5, 0);
-        if (length(cc.xz) < 0.7 && cc.y > -2.2 && cc.y < 0.2) continue;   // you, seen from your own eyes
+        float3 cc = aPos[i].xyz + float3(0, 0.1 + Hh * 0.5, 0);
+        if (length(cc.xz) < 0.7 && cc.y > -2.2 && cc.y < 0.2) continue;   // you, from your own eyes
         float  tc = dot(cc, rdv);
-        if (tc < 0.3) continue;
+        if (tc < 0.5 || tc > 64.0) continue;   // (perf audit: no outline work past 64 blocks)
         float3 off = rdv * tc - cc;
-        if (dot(off, off) > (Hh * 0.5 + 1.4) * (Hh * 0.5 + 1.4)) continue;   // the ray passes nowhere near it
-        L += radFlame(B, Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37);
-        // its light on the ground round its feet
-        float3 g = P - B;
-        if (abs(g.y + 0.1) < 0.5) L += rad0.rgb * 0.18 * (0.4 + rad1.x) * exp(-dot(g.xz, g.xz) / 0.9) * smoothstep(0.5, 0.0, abs(g.y + 0.1));
+        float  pxPerBlock = c4.y / max(tc, 0.5) * 0.9;                    // rough screen size of a block there
+        float  reach = 18.0 * sc / pxPerBlock;                            // the glow's reach, in blocks
+        if (abs(off.y) > Hh * 0.5 + 0.4 + reach || length(off.xz) > 0.55 + reach) continue;
+        bool   on = radIn(p, i, dist + 0.01) > 0.5;
+        float  edge = 0.0, glow = 0.0;
+        [unroll] for (int k = 0; k < 12; ++k) {
+            float a = float(k) * 0.5235988;
+            float2 dir = float2(cos(a), sin(a));
+            if (on) {
+                edge = max(edge, 1.0 - radIn(p + int2(dir * 1.8 * sc), i, 1e4));
+            } else {
+                float g = 0.0;
+                g = max(g, radIn(p + int2(dir * 2.5 * sc), i, dist - 0.4) * 1.0);
+                g = max(g, radIn(p + int2(dir * 7.0 * sc), i, dist - 0.4) * 0.55);
+                g = max(g, radIn(p + int2(dir * 13.0 * sc), i, dist - 0.4) * 0.25);
+                glow += g;
+            }
+        }
+        glow /= 6.0;                                                      // a smooth falloff (and stronger in corners)
+        float3 col = rad0.rgb, hot = lerp(rad0.rgb, float3(1, 1, 1), 0.55);
+        float  shimmer = 0.85 + 0.15 * sin(t * 2.5 * max(rad1.z, 0.2) + (P.y + c5.y) * 3.0);
+        L += (hot * edge * (1.6 + rad1.x) + col * saturate(glow * 1.3) * (1.0 + 1.3 * rad1.x)) * shimmer;
+        if (on) L += col * (0.10 + 0.25 * rad1.y);                         // the body faintly lit
+        L += radFlame(aPos[i].xyz + float3(0, 0.1, 0), Hh, rdv, dist, t, rad0.rgb, float(i) * 1.37) * 0.35;   // soft licks
     }
     return L;
 }
@@ -1260,20 +1297,35 @@ float3 weather(float3 rd, float dist, float t, float night) {
 // Bokeh: a disc gather from the scene copy, radius from how far the pixel is from the focus; bright taps weigh more
 // bokeh (audit: the blur read too weak, max 14 px at 4K, and sharp near edges bled halos into the blur behind them).
 // Now ~22 px at blur 0.5, and a nearer sample only counts if its own blur reaches this pixel (gather-as-scatter).
+float3 posAt(int2 p);
 float bokehCoc(float z, float zf, int mode, int2 p) {
     if (mode == 2) return smoothstep(bk0.z * 0.5, 0.5, abs(float(p.y) / c4.y - 0.55));   // tilt-shift: a sharp band across the screen
-    // (Fernando 2026-11-20: "I don't even know what bokeh is trying to do, everything just looks blurry". With the
-    //  focus on a player 3 blocks away everything past ~4 blocks went fully blurry, and the focus jumped with the
-    //  crosshair.) Now: what you look at and everything near it stays sharp - at least the first 12 blocks, more with
-    //  "how much stays sharp" - and only the far background melts, gradually, into soft light; near blur is mild.
-    float zS = max(zf * (1.0 + 3.0 * bk0.z), 8.0 + 24.0 * bk0.z);
-    float far = smoothstep(zS, zS * 3.5, z);
-    float nearB = bk1.y > 0.5 ? smoothstep(zf * 0.45, zf * 0.15, z) * 0.6 : 0.0;
+    // (Purxiy "Bokeh - real depth of field", Fernando's clips: the subject you look at razor sharp, everything behind
+    //  it melting into soft discs of light - a real camera lens.) Sharp from just in front of the focus to a bit past
+    //  it ("how much stays sharp" widens it), then the blur grows with depth to full by ~2.5x the focus distance.
+    //  The focus itself locks onto the player / mob you are looking at (see bokeh()), not whatever the crosshair grazes.
+    float zA = zf * (1.25 + 1.5 * bk0.z) + 0.6;
+    float far = smoothstep(zA, zA + max(zf * 1.6, 3.0), z);
+    float nearB = bk1.y > 0.5 ? smoothstep(zf * 0.6, zf * 0.25, z) * 0.7 : 0.0;
     return max(far, nearB);
 }
 float3 bokeh(int2 p, float z, bool sky) {
     int mode = int(bk0.x + 0.5);
-    float zf = mode == 1 ? bk0.y : min(viewZ(rawDepth(int2(c4.xy * 0.5))), 300.0);   // auto: what is under the crosshair
+    float zf = bk0.y;
+    if (mode != 1) {   // auto: the nearest thing round the crosshair (5 taps, so a thin gap does not throw it to the sky)...
+        float2 cc = c4.xy * 0.5, sp = c4.xy * float2(0.035, 0.03);
+        zf = viewZ(rawDepth(int2(cc)));
+        zf = min(zf, viewZ(rawDepth(int2(cc + float2(sp.x, 0))))); zf = min(zf, viewZ(rawDepth(int2(cc - float2(sp.x, 0)))));
+        zf = min(zf, viewZ(rawDepth(int2(cc + float2(0, sp.y))))); zf = min(zf, viewZ(rawDepth(int2(cc - float2(0, sp.y)))));
+        // ...and a player / mob near the middle of the view wins: the subject stays in focus
+        float3 fwd = normalize(posAt(int2(cc)));
+        [loop] for (int i = 0; i < min(int(aInfo.x), 24); ++i) {
+            float3 ac = aPos[i].xyz + float3(0, 1.0, 0);
+            float  da = length(ac);
+            if (da > 1.2 && dot(ac / da, fwd) > 0.975) zf = min(zf, da);
+        }
+        zf = clamp(zf, 1.5, 300.0);
+    }
     float zz = sky ? 1e4 : z;
     float Rmax = bk0.w * 34.0 * c4.y / 2160.0;   // audit 2: 44 px + 16 taps cost 3-4.7 ms at 4K
     float R = bokehCoc(zz, zf, mode, p) * Rmax;
@@ -2456,8 +2508,9 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     [branch] if (amb0.w > 0.0) ambL = ambience(rd, sky ? 1e4 : dist, night, t, px);
     float3 nq  = cross(ddx(q), ddy(q));                       // the surface's facing, from the depth around this pixel
     float  upN = abs(nq.y) / max(length(nq), 1e-9);
+    gPx = int2(px);
     [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t, upN, rd);
-    [branch] if (fx6.w > 0.5 && fx3.w > 0.0 && !sky) ambL += rippleEdge(int2(px), q, zc);
+    // (rippleEdge outline retired in round 5: the body glows as glass instead)
     [branch] if (inkInfo.x > 0.5 && !sky) ambL += inkPuddles(q, upN, t);
     [branch] if (cs0.w > 0.0 || au0.w > 0.0 || ha0.w > 0.0) ambL += cosmetics(q, rd, sky ? 1e4 : dist, sky, t);
     float4 overC = 0;                                        // [Purxiy] wings / cape cloth over the world
