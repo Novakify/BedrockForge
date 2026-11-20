@@ -470,7 +470,8 @@ void atmosTick() {
         {
             bool const rainOn = wx && wx->enabled && int(wx->num("mode", 0)) == 0;
             float const vol = rainOn ? wx->num("sounds", 0.5f) : 0.f;
-            try { weathersounds::rain(rainOn ? vol * std::clamp(0.35f + 0.4f * wx->num("intensity", 1.f), 0.f, 1.f) * 0.6f : 0.f); } catch (...) {}
+            // (rain loop removed - Fernando 2026-11-20: "a weird noise that sounds nothing like rain"; thunder stays)
+            try { weathersounds::rain(0.f); } catch (...) {}
             static int64_t nextStrike = 0, lastStrike = 0, thunderAt = 0;
             static float az = 0.f, nearK = 0.5f;
             static uint32_t rs = 0x9e3779b9u;
@@ -489,7 +490,7 @@ void atmosTick() {
         }
         if (auto* bk = r.find("bokeh"); bk && bk->enabled)
             out += std::format("bk 1\nbk_mode {}\nbk_dist {:.1f}\nbk_band {:.2f}\nbk_blur {:.2f}\nbk_hi {:.2f}\nbk_near {}\nbk_fringe {:.2f}\n", int(bk->num("focus", 0)),
-                               bk->num("distance", 24.f), bk->num("band", 0.26f), bk->num("blur", 0.5f), bk->num("highlights", 0.6f), bk->flag("near", true) ? 1 : 0, bk->num("fringe", 0.45f));
+                               bk->num("distance", 24.f), bk->num("band", 0.26f), bk->num("blur", 0.5f), bk->num("highlights", 0.6f), bk->flag("near", false) ? 1 : 0, bk->num("fringe", 0.45f));
         else out += "bk 0\n";
         if (auto* pm = r.find("place_animation"); pm && pm->enabled) { auto c = pal(pm, 0); out += std::format("pa 1\npa_c {:.3f} {:.3f} {:.3f}\npa_dur {:.2f}\npa_glow {:.2f}\npa_break {}\n", c[0], c[1], c[2], pm->num("duration", 0.34f) * 1.6f, pm->num("glow", 0.6f), pm->flag("breaking", true) ? 1 : 0); }
         else out += "pa 0\n";
@@ -1511,7 +1512,7 @@ void registerBuiltins() {
         auto& bkm = r.add("bokeh", "Bokeh", Category::Visual, "Sharp where you look, creamy light behind (Renderer Foundation)", false);
         bkm.choice("focus", "Focus", {"Auto", "Distance", "Tilt-shift"}, 0).slider("distance", "Sharp up to (blocks, Distance)", 24.f, 4.f, 96.f, 1.f)
             .slider("band", "How much stays sharp", 0.26f, 0.05f, 1.f, 0.01f).slider("blur", "Blur", 0.5f, 0.1f, 1.f, 0.05f)
-            .slider("highlights", "Highlights", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("near", "Nearer than the focus blurs too", true)
+            .slider("highlights", "Highlights", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("near", "Nearer than the focus blurs too", false)
             .slider("fringe", "Lilac fringe", 0.45f, 0.f, 1.f, 0.05f);
         // (the block itself cannot grow / pop: its geometry is the game's chunk mesh - only the light is ours)
         auto& pam = r.add("place_animation", "Place Animation", Category::Visual, "A soft light on blocks as you build and break (Renderer Foundation)", false);
