@@ -976,6 +976,10 @@ void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa co
 using ClearDsv_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_CLEAR_FLAGS, FLOAT, UINT8, UINT, D3D12_RECT const*);
 void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE dsv, D3D12_CLEAR_FLAGS flags, FLOAT depth, UINT8 stencil,
                                     UINT n, D3D12_RECT const* rects) {
+    // (Fernando 2026-11-21: "Glass Items still glitching - fixed only with the toggle off") held-back glass draws (items,
+    //  armour) must replay BEFORE the depth they were drawn against is wiped: the world's last actor draws were replayed
+    //  after the world->hand depth clear, so a dropped / held item drew over everything for a frame, or vanished.
+    if (!gInSnapshot && gaOn() && gaHasPending(list)) gaFlush(list);
     // the list that drew the world clears its depth (before the hand): the world is complete on it - the pass goes here
     if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::wanted()) {
         SkyLS* s = skyLS(list);
@@ -1005,6 +1009,7 @@ void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_D
 // Novak / Cloud Sea background. The clear takes the atmosphere's own colour for what lies below instead.
 using ClearRtv_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, FLOAT const*, UINT, D3D12_RECT const*);
 void STDMETHODCALLTYPE clearRtvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE rtv, FLOAT const* color, UINT n, D3D12_RECT const* rects) {
+    if (!gInSnapshot && gaOn() && gaHasPending(list)) gaFlush(list);   // (same: replay before a target is cleared)
     float c[4];
     if (!gInSnapshot && color && rf::sky::worldClearColour(rtv.ptr, color, c)) color = c;
     reinterpret_cast<ClearRtv_t>(gOrig[27])(list, rtv, color, n, rects);
@@ -1172,6 +1177,9 @@ void STDMETHODCALLTYPE copySimpleHook(ID3D12Device* d, UINT n, D3D12_CPU_DESCRIP
     for (UINT i = 0; i < n; ++i) propagate(dst.ptr + SIZE_T(i) * inc, src.ptr + SIZE_T(i) * inc);
 }
 void STDMETHODCALLTYPE barrierHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_RESOURCE_BARRIER const* b) {
+    // held-back glass draws replay while their targets are still render targets (a transition to a texture first, and
+    // the replay wrote into a target in the wrong state: garbage / flicker on Hive items - 2026-11-21)
+    if (!gInSnapshot && gaOn() && b && gaHasPending(list)) gaFlush(list);
     reinterpret_cast<Barrier_t>(gOrig[10])(list, n, b);
     if (b && rf::glassarmor::tracking()) rf::glassarmor::noteBarriers(n, b);
     if (gInSnapshot || gState.load(std::memory_order_relaxed) == Idle || !b) return;
