@@ -533,6 +533,45 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
 }
 
 // ---------------------------------------------------------------- avatar loading
+// (Fernando 2026-11-24: "figura stopped working again ... my character either stayed the same or turns invisible")
+// active.json named 'stick' while the global pack was the Cat Maid compile: the stick's bone variables drove the
+// Cat Maid geometry -> nothing moved / parts hidden. The pack the game draws with decides: pick the bundle whose
+// rig.json "avatar" matches the installed FiguraBridge pack's name ("FiguraBridge: <avatar>").
+std::string packAvatar(State const& s) {
+    wchar_t exe[1024]{};
+    if (!GetModuleFileNameW(nullptr, exe, 1024)) return {};
+    std::error_code ec;
+    auto const games = fs::path(exe).parent_path() / L"Minecraft Bedrock" / L"Users" / L"Shared" / L"games" / L"com.mojang";
+    std::string want;
+    for (auto const* sub : {L"development_resource_packs", L"resource_packs"}) {
+        for (auto const& e : fs::directory_iterator(games / sub, ec)) {
+            auto const m = lyrics::json::parse(readAll(e.path() / "manifest.json"));
+            if (!m) continue;
+            std::string const n = (*m)["header"]["name"].str();
+            if (n.rfind("FiguraBridge: ", 0) == 0) { want = n.substr(14); break; }
+        }
+        if (!want.empty()) break;
+    }
+    if (want.empty()) return {};
+    for (auto const& e : fs::directory_iterator(s.root, ec)) {
+        if (!e.is_directory()) continue;
+        auto const r = lyrics::json::parse(readAll(e.path() / "rig.json"));
+        if (r && (*r)["avatar"].str() == want) return e.path().filename().string();
+    }
+    return {};
+}
+std::string wantedAvatar(State& s) {
+    std::string n;
+    if (auto cfg = lyrics::json::parse(readAll(s.root / "active.json"))) n = (*cfg)["avatar"].str();
+    std::string const p = packAvatar(s);
+    if (!p.empty() && p != n) {
+        static std::string told;
+        if (told != n + ">" + p) { told = n + ">" + p; s.host->write("[figurabridge] active.json says '" + n + "' but the installed pack is '" + p + "': using '" + p + "'"); }
+        return p;
+    }
+    return n;
+}
+
 bool loadAvatar(State& s, std::string const& name) {
     fs::path dir = s.root / name;
     auto     av  = std::make_unique<Avatar>(s.host.get());
@@ -698,8 +737,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             if (!ec) {
                 auto v = mt.time_since_epoch().count();
                 if (s.reloadStamp != 0 && v != s.reloadStamp) {
-                    std::string n = s.avatarName;
-                    if (auto cfg = lyrics::json::parse(readAll(s.root / "active.json"))) n = (*cfg)["avatar"].str();
+                    std::string n = wantedAvatar(s);
+                    if (n.empty()) n = s.avatarName;
                     s.host->lastError.clear();
                     if (f.player && !n.empty() && n != s.avatarName) {
                         // Bedrock keeps the resource pack (geometry/animations of the installed avatar) it read at
@@ -728,8 +767,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         s.lastFullWriteMs = 0; // new actor: write every variable again
         // the pack Bedrock just loaded holds whatever avatar is installed now (active.json), even without a reload
         if (s.pendingAvatar.empty())
-            if (auto cfg = lyrics::json::parse(readAll(s.root / "active.json"))) {
-                std::string n = (*cfg)["avatar"].str();
+            {
+                std::string n = wantedAvatar(s);
                 if (!n.empty() && n != s.avatarName && fs::exists(s.root / n / "rig.json")) s.pendingAvatar = n;
             }
         if (!s.pendingAvatar.empty()) { // the pack now holds the newly installed avatar: switch to it
@@ -855,7 +894,7 @@ void install(fs::path const& modDir, fs::path const& configDir) {
     fs::create_directories(gS->root, ec);
     gS->host          = std::make_unique<BedrockHost>();
     gS->host->logFile = configDir / "figurabridge.log";
-    if (auto cfg = lyrics::json::parse(readAll(gS->root / "active.json"))) gS->avatarName = (*cfg)["avatar"].str();
+    gS->avatarName = wantedAvatar(*gS);
     (void)modDir;
     auto& m = bedrock_forge::client::Registry::get().add(
         "figurabridge", "FiguraBridge", bedrock_forge::client::Category::Visual,
