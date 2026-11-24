@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "ll/api/memory/Hook.h"
+#include "core/ImpactFrames.h"
 
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/network/ClientNetworkHandler.h"
@@ -36,6 +37,8 @@
 #include "mc/network/NetworkIdentifier.h"
 #include "mc/network/PacketSender.h"
 #include "mc/network/packet/ActorEventPacket.h"
+#include "mc/network/packet/AnimatePacket.h"
+#include "mc/client/network/LegacyClientNetworkHandler.h"
 #include "mc/network/packet/CommandRequestPacket.h"
 #include "mc/network/packet/CommandRequestPacketPayload.h"
 #include "mc/network/packet/SetTitlePacket.h"
@@ -364,6 +367,20 @@ LL_TYPE_INSTANCE_HOOK(BfActorEventHook, ll::memory::HookPriority::Normal, Client
     } catch (...) {}
     origin(source, packet);
 }
+// the server's critical-hit animation (Hive and other server worlds: the only real sign a hit was a crit)
+LL_TYPE_INSTANCE_HOOK(BfAnimatePacketHook, ll::memory::HookPriority::Normal, LegacyClientNetworkHandler, &LegacyClientNetworkHandler::$handle,
+                      void, NetworkIdentifier const& source, AnimatePacket const& packet) {
+    try {
+        auto get = [](auto const& f) -> decltype(auto) {
+            if constexpr (requires { f.get(); }) return f.get();
+            else return (f);
+        };
+        auto const a = AnimatePacketPayload::Action(get(packet.mAction));
+        if (a == AnimatePacketPayload::Action::CriticalHit || a == AnimatePacketPayload::Action::MagicCriticalHit)
+            bedrock_forge::impact::reportServerCrit(uint64_t(get(packet.mRuntimeId).rawID));
+    } catch (...) {}
+    origin(source, packet);
+}
 LL_TYPE_INSTANCE_HOOK(BfTitlePacketHook, ll::memory::HookPriority::Normal, ClientNetworkHandler, &ClientNetworkHandler::$handle, void,
                       NetworkIdentifier const& source, SetTitlePacket const& packet) {
     try { bedrock_forge::client::serverauto::handleTitle(packet.mTitleText.get()); } catch (...) {}
@@ -375,10 +392,12 @@ void install() {
     BfTextPacketHook::hook();
     BfTitlePacketHook::hook();
     BfActorEventHook::hook();
+    BfAnimatePacketHook::hook();
 }
 void uninstall() {
     BfTextPacketHook::unhook();
     BfTitlePacketHook::unhook();
     BfActorEventHook::unhook();
+    BfAnimatePacketHook::unhook();
 }
 } // namespace bedrock_forge::client::serverauto

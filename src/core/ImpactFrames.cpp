@@ -59,8 +59,10 @@ void fire(float damage) {
 
 std::atomic<void (*)()> gCritListener{nullptr};
 std::atomic<int64_t>    gCritHeardAt{0};
+std::atomic<int64_t>    gLastCritAt{0};
 // A crit can be reported twice in single-player (server Player + client LocalPlayer): 1 trigger per 100 ms.
 void onCrit(char const*) {
+    gLastCritAt = nowMs();
     if (auto* fn = gCritListener.load(); fn && nowMs() - gCritHeardAt.load() > 100) { gCritHeardAt = nowMs(); fn(); }
     auto const* s = gSettings;
     if (!s || !s->enabled || !s->critOnly) return;
@@ -117,11 +119,20 @@ LL_TYPE_INSTANCE_HOOK(BfCritHook, ll::memory::HookPriority::Normal, Player, &Pla
 LL_TYPE_INSTANCE_HOOK(BfLocalCritHook, ll::memory::HookPriority::Normal, LocalPlayer, &LocalPlayer::$emitCriticalHitParticles, void,
                       Actor const& target, int particleCount) {
     origin(target, particleCount);
-    onCrit("local");
+    // (2026-11-24) not a crit by itself: on Hive the client draws its own predicted crit on a falling hit the server
+    // never counts. Single-player crits come through the server Player above, server crits through the AnimatePacket.
 }
 
 void setLocalPlayerId(long long rawId) { gLocalPlayer = rawId; }
 void setCritListener(void (*fn)()) { gCritListener = fn; }
+namespace { std::atomic<uint64_t> gMyTarget{0}, gMyRid{0}; std::atomic<int64_t> gMyAttackAt{0}; }
+void noteMyAttack(uint64_t targetRid, uint64_t myRid) { gMyTarget = targetRid; gMyRid = myRid; gMyAttackAt = nowMs(); }
+void reportServerCrit(uint64_t rid) {
+    if (rid == 0 || nowMs() - gMyAttackAt.load() > 700) return;
+    if (rid != gMyTarget.load() && rid != gMyRid.load()) return;   // someone else's crit nearby
+    onCrit("server");
+}
+int64_t lastCritMs() { return gLastCritAt.load(); }
 
 void uninstall() {
     BfCritHook::unhook();

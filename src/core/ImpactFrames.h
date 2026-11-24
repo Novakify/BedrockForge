@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // Prototype 3 - Cinematic Impact Frames (v0.2)
 //
 // Behaviour reference: "Impact frames" Fabric mod by TheFoxThatHates (ARR licence:
@@ -74,5 +75,13 @@ void setLocalPlayerId(long long rawId);
 /// whatever the Impact Frames settings: the client upgrades the hit it just made to a crit (Hit Splash / Ripple /
 /// crosshair / knives) only on these - not on its own falling-hit guess, which fired on Hive where crits don't land.
 void setCritListener(void (*fn)());
+
+/// Your attack just landed on runtime id `targetRid` (client attack hook).
+void noteMyAttack(uint64_t targetRid, uint64_t myRid);
+/// The server played a critical-hit animation on runtime id `rid` (AnimatePacket CriticalHit - Hive and other
+/// server-authoritative worlds, where the client never runs its own crit). Counts only for your last hit.
+void reportServerCrit(uint64_t rid);
+/// steady-clock ms of the last real crit heard (0 = none)
+int64_t lastCritMs();
 
 } // namespace bedrock_forge::impact

@@ -153,6 +153,7 @@ void onRealCrit() {
     auto& e = gFxEv.e[gLastHitEvIdx.load() % 32];
     if (e.kind == 2u && e.atMs >= at - 5) e.kind = 3u;
     gLastHitCrit = true;
+    matchfx::onRealCrit();
 }
 bool const gCritListenerSet = (bedrock_forge::impact::setCritListener(&onRealCrit), true);
 std::atomic<int64_t>  gVanillaCrossMs{0};     // [Custom Crosshair] the last frame the game wanted its crosshair (first person, GUI shown)
@@ -863,10 +864,14 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
     try {   // Hit Splash / Ripple: where the hit landed. A plain hit for now - it becomes a critical only when the game
             // itself reports one (onRealCrit below). The old guess (falling = crit) fired crit effects on Hive, where
             // falling hits are not crits (2026-11-24).
-        gLastHitCrit = false;
+        gLastHitCrit = nowMs() - bedrock_forge::impact::lastCritMs() < 40;   // (the game's own crit came first)
         gLastHitEvAt  = nowMs();
         gLastHitEvIdx = gFxEv.frame;
-        pushFxEvent(2u, hit.x, hit.y, hit.z);
+        pushFxEvent(gLastHitCrit ? 3u : 2u, hit.x, hit.y, hit.z);
+        try {
+            auto* me = static_cast<Player*>(gLocalPlayer.load());
+            bedrock_forge::impact::noteMyAttack(uint64_t(target.getRuntimeID().rawID), me ? uint64_t(me->getRuntimeID().rawID) : 0);
+        } catch (...) {}
     } catch (...) {}
     try { cosmetics::noteLocalHit(false); } catch (...) {}   // Knives: sparks + cut on your hit
 }
