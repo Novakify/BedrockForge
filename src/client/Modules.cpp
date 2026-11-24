@@ -596,8 +596,8 @@ void hudHiderFrame(ScreenView& view) {
 
 // ---------------------------------------------------------------- Now Playing (Purxiy "Spotify player": your music on screen,
 // with lyrics to sing along). Uses LyricsForge's media session + lyrics; the in-world lyrics stay LyricsForge's own.
-std::string mmss(int64_t ms) { ms = std::max<int64_t>(ms, 0) / 1000; return std::format("{}:{:02}", ms / 60, ms % 60); }
-void drawNowPlaying(Frame& f, Module& m) {
+[[maybe_unused]] std::string mmss(int64_t ms) { ms = std::max<int64_t>(ms, 0) / 1000; return std::format("{}:{:02}", ms / 60, ms % 60); }
+[[maybe_unused]] void drawNowPlaying(Frame& f, Module& m) {
     ::bf::lyrics::win::NowPlaying np;
     if (!::bf::lyrics::win::nowPlaying(np) || !np.hasTrack) return;
     int const paused = int(m.num("paused", 1));                   // Show / Dim / Hide
@@ -1526,24 +1526,9 @@ void registerBuiltins() {
         auto& hh = r.add("hud_hider", "HUD Hider", Category::Hud, "Choose which Minecraft HUD elements to hide", false);
         for (auto const& g : hideGroups()) hh.toggleSetting(g.id, g.label, false);
     }
-    {
-        // LyricsForge add-on: needs the LyricsForge module on (it reads Apple Music / Spotify / any player in Windows' media
-        // controls); with LyricsForge's "Player only" it is all of LyricsForge you get: your music, controlled in game
-        auto& np = r.add("now_playing", "LyricsForge Player", Category::Hud, "LyricsForge add-on: your music on screen with the lyrics, and media keys (Apple Music, Spotify, any player)", false);
-        np.choice("layout", "Layout", {"Split", "Combined", "Lyrics only", "Player only"}, 0)
-            .slider("player_size", "Player size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("player_background", "Player background", true)
-            .slider("player_opacity", "Player background opacity", 0.6f, 0.f, 1.f, 0.05f)
-            .slider("player_x", "Player X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f).slider("player_y", "Player Y (0 top .. 1 bottom)", 0.92f, 0.f, 1.f, 0.01f)
-            .toggleSetting("visualizer", "Visualizer (bars that move with the music)", true).choice("colors", "Colours", {"Novak", "Album"}, 0)
-            .slider("lyrics_size", "Lyrics size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("lyrics_background", "Lyrics background", true)
-            .slider("lyrics_opacity", "Lyrics background opacity", 0.6f, 0.f, 1.f, 0.05f)
-            .slider("lyrics_x", "Lyrics X", 0.5f, 0.f, 1.f, 0.01f).slider("lyrics_y", "Lyrics Y", 0.06f, 0.f, 1.f, 0.01f)
-            .slider("lines", "Lines at once", 2, 1, 3, 1).toggleSetting("glow", "Glow on the line being sung", true)
-            .choice("paused", "When paused", {"Show", "Dim", "Hide"}, 1)
-            .slider("key_play", "Play / pause key (Unbound = 0)", 0, 0, 254, 1).slider("key_next", "Next song key", 0, 0, 254, 1)
-            .slider("key_prev", "Previous song key", 0, 0, 254, 1);
-        np.hud = [](Frame& f) { if (auto* m = Registry::get().find("now_playing")) drawNowPlaying(f, *m); };
-    }
+    // (2026-11-23, Fernando: "two versions of the mini player with LyricsForge on - remove the second, keep LyricsForge's
+    //  own") The separate "LyricsForge Player" HUD module (player card bottom-right + lyrics top-middle) is gone; the
+    //  player, lyrics and top bar of LyricsForge itself (toggles in its panel) are the only ones.
     r.add("creamy_keys", "Keyboard Sounds", Category::Misc, "Your keyboard, with a sound of its own", false)
         .choice("profile", "Sound", {"Silk", "Stone", "Glass"}, 0).slider("volume", "Volume", 0.6f, 0.f, 1.f, 0.05f);
     r.add("nick_hider", "Nick Hider", Category::Misc, "Hide your name in screenshots and streams (chat, the player list)", false)
