@@ -301,6 +301,7 @@ void pushEvent(BlockSource& bs, int x, int y, int z, uint32_t kind, Block const&
     ++gFx.nEvents;
 }
 
+float   gMe[3]{};         // your feet, last frame
 void onChange(ll::event::BlockChangedEvent& ev) {
     if (ev.layer() != 0) return;
     auto const& p    = ev.pos();
@@ -313,7 +314,12 @@ void onChange(ll::event::BlockChangedEvent& ev) {
             static int64_t lastAt = 0; static int lx = 0, ly = 0, lz = 0;
             int64_t const t = nowMs();
             bool const dup = t - lastAt < 150 && lx == p.x && ly == p.y && lz == p.z;   // single-player fires twice
-            if ((placed || broke) && !dup) {
+            // (2026-11-24, Fernando: "the pink hue keeps happening randomly, I don't know the trigger") - this fired for EVERY
+            // block anyone changed within 80 blocks: on Hive that is every bridge, bed and TNT around you, a purple-pink
+            // glow popping up at random. Only blocks within your reach now (your own building / breaking).
+            float const ex = float(p.x) + 0.5f - gMe[0], ey = float(p.y) + 0.5f - (gMe[1] + 1.62f), ez = float(p.z) + 0.5f - gMe[2];
+            bool const mine = ex * ex + ey * ey + ez * ez < 5.6f * 5.6f;
+            if ((placed || broke) && !dup && mine) {
                 lastAt = t; lx = p.x; ly = p.y; lz = p.z;
                 bedrock_forge::client::pushFxEvent(placed ? 5u : 6u, float(p.x), float(p.y), float(p.z), 0.f);
             }
@@ -382,7 +388,6 @@ int dyeOfTag(std::string const& t) {
 }
 int64_t gLocalDeadAt = 0; // when you last died (a respawn follows)
 std::atomic<int64_t> gArmorEv[3]{}; // the stick armor's moments: bed broken by you, your kill, your respawn
-float   gMe[3]{};         // your feet, last frame
 // ---- skins for RF's death scenes: each player's skin image, once, into one of 16 slots (64x64 classic layout)
 struct SkinSlot { std::string name; bool local = false; };
 SkinSlot gSkinSlots[16];

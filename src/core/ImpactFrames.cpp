@@ -57,8 +57,11 @@ void fire(float damage) {
     ++gImpactSeq;
 }
 
+std::atomic<void (*)()> gCritListener{nullptr};
+std::atomic<int64_t>    gCritHeardAt{0};
 // A crit can be reported twice in single-player (server Player + client LocalPlayer): 1 trigger per 100 ms.
 void onCrit(char const*) {
+    if (auto* fn = gCritListener.load(); fn && nowMs() - gCritHeardAt.load() > 100) { gCritHeardAt = nowMs(); fn(); }
     auto const* s = gSettings;
     if (!s || !s->enabled || !s->critOnly) return;
     if (nowMs() - gImpactAtMs.load() < 100) return;
@@ -118,6 +121,7 @@ LL_TYPE_INSTANCE_HOOK(BfLocalCritHook, ll::memory::HookPriority::Normal, LocalPl
 }
 
 void setLocalPlayerId(long long rawId) { gLocalPlayer = rawId; }
+void setCritListener(void (*fn)()) { gCritListener = fn; }
 
 void uninstall() {
     BfCritHook::unhook();

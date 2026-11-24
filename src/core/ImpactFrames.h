@@ -70,4 +70,9 @@ void uninstall();
 /// Remember who the local player is (called on ClientJoinLevelEvent; 0 on exit).
 void setLocalPlayerId(long long rawId);
 
+/// Called on every REAL critical hit the game reports (its crit particles / the server's crit animate packet),
+/// whatever the Impact Frames settings: the client upgrades the hit it just made to a crit (Hit Splash / Ripple /
+/// crosshair / knives) only on these - not on its own falling-hit guess, which fired on Hive where crits don't land.
+void setCritListener(void (*fn)());
+
 } // namespace bedrock_forge::impact
