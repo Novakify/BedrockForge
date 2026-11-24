@@ -15,6 +15,7 @@ struct CameraSnap {
     float   proj[16]{};                     // projection matrix, column-major (glm), as the game uses it
     float   fovYDeg = 70.0f, aspect = 16.0f / 9.0f;
     int64_t atMs = 0;                       // steady clock ms of the capture
+    bool    eyeCam = false;                 // the camera the game draws the world from (by the player), not the origin stand-in
     uint64_t calls = 0, chosen = 0;         // diagnostics
 };
 

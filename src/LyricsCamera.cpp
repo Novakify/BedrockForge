@@ -88,6 +88,7 @@ void onCamera(mce::Camera& cam) {
     s.fovYDeg = 2.0f * std::atan(1.0f / P[1][1]) * 57.2957795f;
     s.aspect  = P[1][1] / P[0][0];
     s.atMs    = nowMs();
+    s.eyeCam  = true;
     std::lock_guard l(gMutex); // only plain data under the lock
     s.calls  = gSnap.calls + 1;
     s.chosen = gSnap.chosen + 1;

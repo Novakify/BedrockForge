@@ -32,6 +32,7 @@
 #include "BfLyrics.h"
 #include "LLShim.h"
 #include "LyricsCamera.h"
+#include "Cinematic.h"
 #include <unordered_map>
 #include <fstream>
 #include <iterator>
@@ -3296,6 +3297,30 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                     ax += ev->pvx * lead, ay += ev->pvy * lead, az += ev->pvz * lead, ayaw += ev->pyawRate * lead;
                 }
                 if (ev->version >= 4 && ev->size >= sizeof(rf::postfx::BfFxEventsV1)) hvx = ev->pvx, hvy = ev->pvy, hvz = ev->pvz;
+                // (Fernando 2026-11-24: "cosmetics still shake ... not tracking well") BF can only GUESS where between two
+                // ticks the game draws you (it sees ticks a frame late), and every miss shook the cape / wings / halo against
+                // the body. The camera the game draws this very frame is built from that exact blend: in first person it
+                // sits at your eye, in third person on the line through your eye along the view. So: your eye = camera +
+                // forward * d, with d (0 first person, ~4 behind, ~-4 in front) and a small fixed offset learned slowly from
+                // BF's pose - BF's guess only nudges those, it no longer moves the anchor frame to frame.
+                if (snap.valid && snap.eyeCam && nowMs - snap.atMs <= 40 && !(rf::cine::active())) {
+                    static double cd = 0, cr[3] = {0, 0, 0}; static bool cInit = false;
+                    double const ex = ax - snap.pos[0], ey = ay + 1.62 - snap.pos[1], ez = az - snap.pos[2];
+                    double const dRaw = ex * snap.forward[0] + ey * snap.forward[1] + ez * snap.forward[2];
+                    double const rx = ex - snap.forward[0] * dRaw, ry = ey - snap.forward[1] * dRaw, rz = ez - snap.forward[2] * dRaw;
+                    double const sp = std::sqrt(hvx * hvx + hvy * hvy + hvz * hvz);
+                    if (!cInit || std::fabs(dRaw - cd) > 1.5) { cd = std::fabs(dRaw) < 0.6 ? 0.0 : dRaw; cr[0] = cr[1] = cr[2] = 0; cInit = true; }
+                    double const kd = sp < 0.05 ? 0.25 : 0.04;               // still: BF is exact, follow it; moving: barely
+                    cd += ((std::fabs(dRaw) < 0.6 ? 0.0 : dRaw) - cd) * kd;
+                    if (sp < 0.05) { cr[0] += (rx - cr[0]) * 0.1; cr[1] += (ry - cr[1]) * 0.1; cr[2] += (rz - cr[2]) * 0.1; }
+                    double const rr = std::sqrt(rx * rx + ry * ry + rz * rz);
+                    if (rr < 1.2 && std::fabs(cr[0]) + std::fabs(cr[1]) + std::fabs(cr[2]) < 0.8) {   // the camera is on you (not freelook / a cutscene)
+                        ax = snap.pos[0] + snap.forward[0] * cd + cr[0];
+                        ay = snap.pos[1] + snap.forward[1] * cd + cr[1] - 1.62;
+                        az = snap.pos[2] + snap.forward[2] * cd + cr[2];
+                        src = 3;
+                    }
+                }
                 hx = ax, hy = ay, hz = az, hyaw = ayaw, hAt = nowMs; fresh = true;
             } else if (hAt && nowMs - hAt < 400) {   // a gap: hold the last pose, carried on with its speed
                 double const g = double(nowMs - hAt) / 1000.0;
