@@ -3057,6 +3057,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     bool const killPso = pso != nullptr;
     if (!pso && (!blurOnly || matchOnly)) pso = derived(dev.Get(), g, look.glass > 0.0f && !matchOnly ? 6 : 5);
     if (!pso && !blurOnly) { wfxStatus("building the pass pipeline (in the background)"); return false; }
+    // (2026-11-23: joining a server crashed the game inside the GPU driver - with the World FX sky off no World FX pipeline
+    //  had been built yet, so its root signature did not exist and the blur-only path bound a null one. Make sure it
+    //  exists before anything is recorded; skip the frame if it can't be made.)
+    if (!gWfxRoot && !makeWfxRoot(dev.Get())) { wfxStatus("root signature failed"); return false; }
     bool const matchDraw = matchOnly && pso;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
     UINT64 rTot = 0, dTot = 0;
@@ -3200,6 +3204,9 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         calls.draw(list, 3, 1, 0, 0);
     }
     } else {       // no World FX sky: only what the blur draw needs
+        // (2026-11-23: joining a server crashed the game in the GPU driver right here - the root signature is only made
+        //  with a World FX pipeline, and with the World FX sky off none had been made yet: SetGraphicsRootSignature(null).
+        //  Make it now, and skip this frame's pass if that fails.)
         calls.setRootSig(list, gWfxRoot.Get());
         list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
         list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
