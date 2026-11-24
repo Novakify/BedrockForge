@@ -1,3 +1,4 @@
+#include "core/ImpactFrames.h"
 #include "ll/api/event/world/ClientLevelTickEvent.h"
 #include <cstdio>
 #include <cctype>
@@ -301,6 +302,7 @@ void pushEvent(BlockSource& bs, int x, int y, int z, uint32_t kind, Block const&
     ++gFx.nEvents;
 }
 
+float   gMe[3]{};         // your feet, last frame
 void onChange(ll::event::BlockChangedEvent& ev) {
     if (ev.layer() != 0) return;
     auto const& p    = ev.pos();
@@ -313,7 +315,12 @@ void onChange(ll::event::BlockChangedEvent& ev) {
             static int64_t lastAt = 0; static int lx = 0, ly = 0, lz = 0;
             int64_t const t = nowMs();
             bool const dup = t - lastAt < 150 && lx == p.x && ly == p.y && lz == p.z;   // single-player fires twice
-            if ((placed || broke) && !dup) {
+            // (2026-11-24, Fernando: "the pink hue keeps happening randomly, I don't know the trigger") - this fired for EVERY
+            // block anyone changed within 80 blocks: on Hive that is every bridge, bed and TNT around you, a purple-pink
+            // glow popping up at random. Only blocks within your reach now (your own building / breaking).
+            float const ex = float(p.x) + 0.5f - gMe[0], ey = float(p.y) + 0.5f - (gMe[1] + 1.62f), ez = float(p.z) + 0.5f - gMe[2];
+            bool const mine = ex * ex + ey * ey + ez * ez < 5.6f * 5.6f;
+            if ((placed || broke) && !dup && mine) {
                 lastAt = t; lx = p.x; ly = p.y; lz = p.z;
                 bedrock_forge::client::pushFxEvent(placed ? 5u : 6u, float(p.x), float(p.y), float(p.z), 0.f);
             }
@@ -382,7 +389,6 @@ int dyeOfTag(std::string const& t) {
 }
 int64_t gLocalDeadAt = 0; // when you last died (a respawn follows)
 std::atomic<int64_t> gArmorEv[3]{}; // the stick armor's moments: bed broken by you, your kill, your respawn
-float   gMe[3]{};         // your feet, last frame
 // ---- skins for RF's death scenes: each player's skin image, once, into one of 16 slots (64x64 classic layout)
 struct SkinSlot { std::string name; bool local = false; };
 SkinSlot gSkinSlots[16];
@@ -652,7 +658,8 @@ void moveLocal(Actor* a, float x, float y, float z) {
 // ---- hits: the server shows a hurt animation on someone (ActorEvent 2) -> impact light on them (kind 8)
 struct PendingHit { uint64_t rid; int64_t at; };
 std::vector<PendingHit> gHits;
-int64_t gLastClickMs = -100000;   // your last attack click (left mouse): only a hit right after one is yours
+int64_t gLastClickMs = -100000;
+uint32_t gMineEvIdx = 0; int64_t gMineEvAt = -100000;   // your last hit's impact light (a late real crit upgrades it)   // your last attack click (left mouse): only a hit right after one is yours
 void resolveHits(LocalPlayer& lp, int64_t now) {
     if (gHits.empty()) return;
     std::vector<PendingHit> hits;
@@ -663,8 +670,9 @@ void resolveHits(LocalPlayer& lp, int64_t now) {
     // a critical hit (falling, off the ground) or a mace hit: World FX draws its impact frame only for these
     bool heavy = false;
     try {
-        float const vy = lp.getPosDelta().y;
-        heavy = !lp.isOnGround() && vy < -0.02f && vy > -3.0f;   // (a teleport is not a fall)
+        // (2026-11-24: the falling-hit guess flashed impact frames on Hive, where those hits are not crits) the
+        // game's own crit only - it can also come just after this (onRealCrit upgrades the light then)
+        heavy = now - bedrock_forge::impact::lastCritMs() < 700;
         std::string nm = lp.getSelectedItem().getName();
         std::transform(nm.begin(), nm.end(), nm.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
         heavy = heavy || nm.find("mace") != std::string::npos;
@@ -694,6 +702,7 @@ void resolveHits(LocalPlayer& lp, int64_t now) {
                 e.col[0] = kDye[d][0], e.col[1] = kDye[d][1], e.col[2] = kDye[d][2];
                 if (mine) note("your hit{} on '{}'", heavy ? " (crit / mace: impact frame)" : "", [&] { try { return a->getTypeName(); } catch (...) { return std::string(); } }());
                 e.col[3] = self ? 2.0f : (mine ? (heavy ? 1.25f : 1.0f) : 0.0f);   // 2 you were hit, 1 your hit (1.25 crit / mace), 0 someone else's
+                if (mine) gMineEvIdx = gFx.nEvents, gMineEvAt = now;
                 e.seed = uint32_t(now) * 2654435761u;
                 e.floorDy = uint32_t(std::lround((std::fmod(lp.getRotation().y + 720.0f, 360.0f)) * 10.0f)); // your view yaw x10
                 ++gFx.nEvents;
@@ -1455,6 +1464,11 @@ void onText(std::string const& m) {
         gTarget = 2;
 }
 
+void onRealCrit() {
+    if (nowMs() - gMineEvAt > 600) return;
+    auto& e = gFx.events[gMineEvIdx % 256];
+    if (e.kind == 8 && e.col[3] > 0.9f && e.col[3] < 1.1f) e.col[3] = 1.25f;
+}
 void onActorEvent(uint64_t rid, int event) {
     if (event != 2 || !rid) return;   // 2 = hurt
     std::lock_guard l(gMutex);

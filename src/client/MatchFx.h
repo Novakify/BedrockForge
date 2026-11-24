@@ -102,6 +102,8 @@ void noteHit(uint64_t runtimeId);   // [Cute World] your hit landed on this acto
 void onText(std::string const& message);
 /// the server played an actor event (2 = hurt) on runtime id `rid` (network thread)
 void onActorEvent(uint64_t rid, int event);
+/// the game reported a real critical hit: your last hit's impact light becomes a crit (client thread)
+void onRealCrit();
 /// the time of day the game should render while a consumer is attached; false = leave the game's own
 bool timeOverride(float& t);
 } // namespace bedrock_forge::client::matchfx
