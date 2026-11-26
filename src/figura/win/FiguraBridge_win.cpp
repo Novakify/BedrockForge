@@ -234,6 +234,7 @@ struct State {
     int64_t                       lastTickMs = 0;
     int64_t                       lastScanMs = 0;
     int64_t                       lastReloadCheckMs = 0;
+    int64_t                       lastSubpackCheckMs = 0;
     long long                     reloadStamp = 0;
     bool                          wheelHeld = false, bWasDown = false, wheelExecDone = false;
     std::set<int>                 digitsDown;
@@ -533,42 +534,43 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
 }
 
 // ---------------------------------------------------------------- avatar loading
-// (Fernando 2026-11-24: "figura stopped working again ... my character either stayed the same or turns invisible")
-// active.json named 'stick' while the global pack was the Cat Maid compile: the stick's bone variables drove the
-// Cat Maid geometry -> nothing moved / parts hidden. The pack the game draws with decides: pick the bundle whose
-// rig.json "avatar" matches the installed FiguraBridge pack's name ("FiguraBridge: <avatar>").
-std::string packAvatar(State const& s) {
-    wchar_t exe[1024]{};
-    if (!GetModuleFileNameW(nullptr, exe, 1024)) return {};
-    std::error_code ec;
-    auto const games = fs::path(exe).parent_path() / L"Minecraft Bedrock" / L"Users" / L"Shared" / L"games" / L"com.mojang";
-    std::string want;
-    for (auto const* sub : {L"development_resource_packs", L"resource_packs"}) {
-        for (auto const& e : fs::directory_iterator(games / sub, ec)) {
-            auto const m = lyrics::json::parse(readAll(e.path() / "manifest.json"));
-            if (!m) continue;
-            std::string const n = (*m)["header"]["name"].str();
-            if (n.rfind("FiguraBridge: ", 0) == 0) { want = n.substr(14); break; }
+// Avatar switch in the game's own pack settings (Fernando 2026-11-26: "make a setting in global resource packs settings
+// to switch from stick figure and cat maid"): the FiguraBridge pack has one subpack per avatar (gear button on the
+// pack in Global Resources). Each subpack's player.entity.json sets v.fbav = its 1-based place in the manifest's
+// "subpacks" list, whose folder_name is the avatar bundle's folder under config/figura. Read on the player once the
+// world is loaded; the bundle follows whatever the game drew with.
+std::vector<std::string> gSubpackFolders;   // read once per process (the list only changes with a new pack)
+bool gSubpacksRead = false;
+std::string subpackAvatar(State const& s, Actor& a) {
+    if (!gSubpacksRead) {
+        gSubpacksRead = true;
+        wchar_t exe[1024]{};
+        if (GetModuleFileNameW(nullptr, exe, 1024)) {
+            std::error_code ec;
+            auto const games = fs::path(exe).parent_path() / L"Minecraft Bedrock" / L"Users" / L"Shared" / L"games" / L"com.mojang";
+            for (auto const* sub : {L"development_resource_packs", L"resource_packs"}) {
+                for (auto const& e : fs::directory_iterator(games / sub, ec)) {
+                    auto const m = lyrics::json::parse(readAll(e.path() / "manifest.json"));
+                    if (!m || (*m)["header"]["name"].str().rfind("FiguraBridge", 0) != 0) continue;
+                    auto const& sp = (*m)["subpacks"];
+                    for (size_t k = 0; k < sp.size(); k++) gSubpackFolders.push_back(sp[k]["folder_name"].str());
+                    if (!gSubpackFolders.empty()) break;
+                }
+                if (!gSubpackFolders.empty()) break;
+            }
         }
-        if (!want.empty()) break;
     }
-    if (want.empty()) return {};
-    for (auto const& e : fs::directory_iterator(s.root, ec)) {
-        if (!e.is_directory()) continue;
-        auto const r = lyrics::json::parse(readAll(e.path() / "rig.json"));
-        if (r && (*r)["avatar"].str() == want) return e.path().filename().string();
-    }
-    return {};
+    float v = readVar(a, "variable.fbav");
+    if (v < 0.5f) v = readVar(a, "fbav");
+    int const i = int(v + 0.5f) - 1;
+    if (i < 0 || i >= int(gSubpackFolders.size())) return {};
+    std::string const& n = gSubpackFolders[size_t(i)];
+    std::error_code ec;
+    return fs::exists(s.root / n / "rig.json", ec) ? n : std::string();
 }
 std::string wantedAvatar(State& s) {
     std::string n;
     if (auto cfg = lyrics::json::parse(readAll(s.root / "active.json"))) n = (*cfg)["avatar"].str();
-    std::string const p = packAvatar(s);
-    if (!p.empty() && p != n) {
-        static std::string told;
-        if (told != n + ">" + p) { told = n + ">" + p; s.host->write("[figurabridge] active.json says '" + n + "' but the installed pack is '" + p + "': using '" + p + "'"); }
-        return p;
-    }
     return n;
 }
 
@@ -762,6 +764,24 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     if (!f.player) return;
     LocalPlayer& lp = *f.player;
     if (s.nameMode < 0) calibrate(s, lp);
+    {   // the avatar picked in the pack's settings (subpack) wins over active.json
+        int64_t const t = nowMs();
+        if (t - s.lastSubpackCheckMs > 1000) {
+            s.lastSubpackCheckMs = t;
+            std::string const n = subpackAvatar(s, lp);
+            if (!n.empty() && n != s.avatarName) {
+                s.host->write("[figurabridge] pack setting picks '" + n + "'");
+                s.pendingAvatar.clear();
+                s.avatar.reset();
+                s.names.clear();
+                loadAvatar(s, n);
+                std::ofstream(s.root / "active.json", std::ios::binary) << "{\"avatar\":\"" << n << "\"}";
+                if (!s.avatar) return;
+                s.lastFullWriteMs = 0;
+                texMarkDirty(*s.avatar);
+            }
+        }
+    }
     if (s.lastPlayer != f.player) { // joined a world: the game reloaded pack textures, push ours again
         s.lastPlayer = f.player;
         s.lastFullWriteMs = 0; // new actor: write every variable again
