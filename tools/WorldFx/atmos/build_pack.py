@@ -166,7 +166,7 @@ def main():
     import vv   # the Vibrant Visuals layer: sky, light, cloud-deck fog, grade, biome routing (+ the pbr capability)
     print(f"{vv.write(pack, a.atmosphere)} Vibrant Visuals files")
     import vv_pbr   # VV materials per block: MERS + height maps (the block look VV can draw)
-    print(f"{vv_pbr.write(pack)} Vibrant Visuals texture sets")
+    print(f"{vv_pbr.write(pack)} block + {vv_pbr.equipment(pack)} equipment Vibrant Visuals texture sets")
     if getattr(m, "BASE", None) == "faithful":
         (pack / "CREDITS.txt").write_text(
             "Cloud Sea by Novak\n\nBlock, item and bed textures: Faithful 32x (Bedrock) by the Faithful team,\n"

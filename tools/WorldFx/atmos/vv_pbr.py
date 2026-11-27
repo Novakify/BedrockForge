@@ -174,10 +174,49 @@ def write(pack: Path, sheet: Path | None = None) -> int:
     return n
 
 
+def equipment(pack: Path) -> int:
+    """Held weapons / tools (textures/worldfx/wfx_*) and armor (textures/models/armor): the Cloud Sea's sky-forged
+    porcelain and sunstone as VV materials. The classic Actor shader reads a material id from alpha (255 = plain,
+    lower = the blade / plate); here the same split decides the texel's material:
+      plain texels (grips, straps, cloth)    matte, a little subsurface
+      pale texels of the blade / plate       glazed porcelain: smooth, light sinks in a little
+      warm saturated texels (gold, amber)    metal edges catching the sun; sunstone holds a faint glow of its own
+    """
+    n = 0
+    for sub, pat in (("worldfx", "wfx_*.png"), ("models/armor", "*.png")):
+        d = pack / "textures" / sub
+        for f in sorted(d.glob(pat)):
+            if f.stem.endswith(("_mers", "_heightmap")):
+                continue
+            a = np.asarray(Image.open(f).convert("RGBA")).astype(np.float64)
+            rgb, al = a[..., :3], a[..., 3]
+            if not (al > 0).any():
+                continue
+            L = lum(rgb)
+            mx, mn = rgb.max(-1) / 255.0, rgb.min(-1) / 255.0
+            sat = np.where(mx > 1e-3, (mx - mn) / np.maximum(mx, 1e-3), 0.0)
+            warm = np.clip((rgb[..., 0] - rgb[..., 2]) / 255.0 * 2.0, 0, 1)
+            special = (al > 0) & (al < 252)                      # the blade / plate (material id in alpha)
+            metal = special * np.clip((sat - 0.25) / 0.25, 0, 1) * np.clip(warm * 1.5, 0, 1)   # gold / amber edges
+            mers = np.zeros(a.shape, np.float64)
+            mers[..., 0] = metal
+            mers[..., 1] = special * metal * 0.035 * np.clip(L * 1.3, 0, 1)                     # sunstone: a held glow
+            mers[..., 2] = np.where(special, 0.22 + 0.10 * (1 - L) - 0.06 * metal, 0.78)
+            mers[..., 3] = np.where(special, 0.35 * (1 - metal), 0.15)
+            mers[al == 0] = 0
+            Image.fromarray((np.clip(mers, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA").save(d / f"{f.stem}_mers.png")
+            (d / f"{f.stem}.texture_set.json").write_text(json.dumps({
+                "format_version": "1.21.30",
+                "minecraft:texture_set": {"color": f.stem, "metalness_emissive_roughness_subsurface": f"{f.stem}_mers"},
+            }, indent=2) + "\n")
+            n += 1
+    return n
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("atmosphere", choices=["cloudsea"])
     ap.add_argument("--sheet", type=Path)
     a = ap.parse_args()
     pack = ROOT / "packs" / "WorldFxCloudSea"
-    print(f"{write(pack, a.sheet)} texture sets written to {pack}")
+    print(f"{write(pack, a.sheet)} block + {equipment(pack)} equipment texture sets written to {pack}")
