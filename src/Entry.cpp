@@ -5,6 +5,7 @@
 #include "Cinematic.h"
 #include "CinematicGame.h"
 #include "GlassArmor.h"
+#include "Lab.h"
 #include "Graphics.h"
 #include "LyricsPass.h"
 #include "MaterialLoader.h"
@@ -32,6 +33,7 @@ public:
     bool load() {
         auto& log = mSelf.getLogger();
         log.info("{} {} (fork of {}) for MC {} - AGPL-3.0, source: see README", RF_NAME, RF_VERSION, RF_BASED_ON, RF_TARGET_VERSION);
+        lab::init(mSelf.getConfigDir()); // config/Lab.txt: VV test session / PIX capturer - first, before any D3D12 hook
         RfOptions::init(mSelf.getConfigDir());
         RfOptions::load();
         materials::install(mSelf.getModDir()); // before the renderer opens its materials

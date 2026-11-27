@@ -47,6 +47,7 @@
 #include "WorldFx.h"
 #include "PostFx.h"
 
+#include "Lab.h"
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"
 #endif
@@ -256,6 +257,7 @@ void pollAtmos() {
     a.hStrength = std::clamp(a.hStrength, 0.f, 1.f); a.hHeight = std::clamp(a.hHeight, 2.f, 96.f); a.hClear = std::clamp(a.hClear, 0.f, 48.f);
     a.aAmount = std::clamp(a.aAmount, 0.f, 2.f); a.aRange = std::clamp(a.aRange, 4.f, 48.f); a.aSize = std::clamp(a.aSize, 0.25f, 3.f);
     a.mDensity = std::clamp(a.mDensity, 0.f, 1.f); a.mHeight = std::clamp(a.mHeight, 2.f, 48.f); a.mClear = std::clamp(a.mClear, 0.f, 32.f);
+    if (rf::lab::vvTest()) { a.haze = false; a.mist = false; skyMode = -1; }   // [Lab] VV test: no Haze / Mist tint, Sky module ignored
     {
         std::lock_guard l(gAtmosMutex);
         gAtmos = a;
@@ -581,7 +583,7 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         auto c = bfCopy();
         if (c) c(&h, nullptr, 0);
         if (h.frame != lf) { lf = h.frame; st = 0; } else if (st < 1000) ++st;
-        gActive = c && h.active && st < 30;
+        gActive = c && h.active && st < 30 && !rf::lab::vvTest();   // [Lab] VV test: Bedrock Forge's sky never takes the screen
         if (gActive && gUi.replace) rf::lyrics::setCameraWanted(true);
         if (gWorldSky.load()) { rf::lyrics::setCameraWanted(true); worldSkyPrepare(device, list); }
         // [Match FX on any sky] the finishers, impact frames, fireworks and block shards ride the World FX pass. With
@@ -3713,7 +3715,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
     std::string   k;
     float         v;
     while (in >> k >> v) {
-        if (k == "cloudsea") { gWorldSky = int(v); rf::worldfx::setTargetsWanted(v != 0); }
+        if (k == "cloudsea") { int const ws = rf::lab::vvTest() ? 0 : int(v); gWorldSky = ws; rf::worldfx::setTargetsWanted(ws != 0); }   // [Lab] VV test: no World FX sky
         else if (k == "shadows") gLook.shadows = v != 0;
         else if (k == "shadow") gLook.shadow = std::clamp(v, 0.f, 1.f);
         else if (k == "ao") gLook.ao = std::clamp(v, 0.f, 1.f);
@@ -3787,6 +3789,7 @@ bool setAtmosphere(int which) {
     return true;
 }
 void toggleAtmosphere() {
+    if (rf::lab::vvTest()) { ll_shim::info("[RF] lab: Ctrl+F6 ignored - VV test session"); return; }
     int const cur = gAtmosWanted.load() >= 0 ? gAtmosWanted.load() : (gLook.glass > 0.0f ? 1 : 0);
     int const to  = 1 - cur;
     bool const ok = setAtmosphere(to);
@@ -3817,7 +3820,7 @@ bool atmosphereNote(std::string& text, float& alpha) {
     return true;
 }
 void saveWorldFxSettings() {
-    if (gWfxConfig.empty()) return;
+    if (gWfxConfig.empty() || rf::lab::vvTest()) return;   // [Lab] VV test: the forced-off sky must not overwrite your WorldFx.txt
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nglass " << gLook.glass << "\nbeds " << (gLook.beds ? 1 : 0)
@@ -3826,6 +3829,7 @@ void saveWorldFxSettings() {
 }
 
 void setWorldSky(int kind) {
+    if (rf::lab::vvTest()) kind = 0;   // [Lab] VV test: Ctrl+F6 / F6 / the Sky module cannot bring a World FX sky back
     gWorldSky = kind;
     rf::worldfx::setTargetsWanted(kind != 0);
     if (!kind) wsStatus("off");
