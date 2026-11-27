@@ -54,9 +54,10 @@ struct Settings {
     float deckThk  = 30.0f;   // blocks over which it thins out to nothing at its top
     float rise     = 22.0f;   // the final fight: how far the clouds rise
     bool  pulse    = true;    // a bed breaks: the air takes its team's colour for a moment
-    float skyGain  = 0.42f;    // the Cloud Sea sky's brightness in VV's HDR target (with sky_auto: relative to the game's own sky)
+    float skyGain  = 12.0f;   // (with the exposure probe: the sky against the world - calibrated in game Nov 27)    // the Cloud Sea sky's brightness in VV's HDR target (with sky_auto: relative to the game's own sky)
     bool  skyAuto  = false;
-    bool  probe    = true;    // expose RF's sky / match layer with the game's own average luminance (VV pre-exposes its frame)
+    bool  probe    = true;
+    float nightLight = 3.0f;  // the moonlit night: the moon's light on the world x this (the Cloud Sea's night is never really dark)    // expose RF's sky / match layer with the game's own average luminance (VV pre-exposes its frame)
     bool  sunFollow = true;   // RF's sun / moon stand at the game's compass directions (VV's shadows fit the sky)
     bool  sunFlip   = false;  // the game's SunDir points away from the sun (set if the sky's sun shows up opposite the shadows)    // follow the game's own sky brightness (auto-exposure, time of day)
 } gSet;
@@ -71,7 +72,7 @@ void saveConfig() {
     f << "# Renderer Foundation - Vibrant Visuals Live (F6 > Vibrant Visuals Live writes this file)\n"
       << "enabled " << (s.enabled ? 1 : 0) << "\nsky " << s.sky << "\nlight " << s.light << "\nair " << s.air << "\ndeck " << (s.deck ? 1 : 0)
       << "\ndeck_density " << s.deckExt << "\ndeck_thickness " << s.deckThk << "\nfinal_rise " << s.rise << "\npulse " << (s.pulse ? 1 : 0)
-      << "\nsky_gain " << s.skyGain << "\nsky_auto " << (s.skyAuto ? 1 : 0) << "\nprobe " << (s.probe ? 1 : 0) << "\nsun_follow " << (s.sunFollow ? 1 : 0) << "\nsun_flip " << (s.sunFlip ? 1 : 0) << "\n";
+      << "\nsky_gain " << s.skyGain << "\nsky_auto " << (s.skyAuto ? 1 : 0) << "\nprobe " << (s.probe ? 1 : 0) << "\nnight_light " << s.nightLight << "\nsun_follow " << (s.sunFollow ? 1 : 0) << "\nsun_flip " << (s.sunFlip ? 1 : 0) << "\n";
 }
 
 // ------------------------------------------------------------------ tagged pipelines
@@ -295,6 +296,13 @@ void patch(int row, uint64_t const* cbv) {
     hue(R::Moon, d.key, s.light * 0.6f);
     hue(R::DirLight, d.key, s.light);
     if (s.pulse && d.pulse > 0.0f) hue(R::DirLight, d.pulseCol, d.pulse * 0.30f);
+    {   // the moonlit night: the moon lights the world (its strength is the .w of the light / moon colour)
+        float const n = std::clamp((d.phase - 1.15f) / 0.75f, 0.0f, 1.0f), k = 1.0f + (s.nightLight - 1.0f) * n * n * (3.0f - 2.0f * n);
+        if (k != 1.0f) {
+            for (int r : {int(R::DirLight), int(R::Moon), int(R::SkyAmb)})
+                if (L.off[r] >= 0) { f4(r)[3] *= r == R::SkyAmb ? std::sqrt(k) : k; dirty.push_back({L.off[r] + 12, 4}); }
+        }
+    }
     if (L.off[R::AirAlbedo] >= 0) {
         float* a = f4(R::AirAlbedo);
         hueTo(a, d.air, s.air);
@@ -380,7 +388,7 @@ bool setKey(std::string const& k, float v) {   // gSetMx held
     if (k == "enabled") gSet.enabled = v != 0; else if (k == "sky") gSet.sky = v; else if (k == "light") gSet.light = v;
     else if (k == "air") gSet.air = v; else if (k == "deck") gSet.deck = v != 0; else if (k == "deck_density") gSet.deckExt = v;
     else if (k == "deck_thickness") gSet.deckThk = v; else if (k == "final_rise") gSet.rise = v; else if (k == "pulse") gSet.pulse = v != 0;
-    else if (k == "sky_gain") gSet.skyGain = v; else if (k == "sky_auto") gSet.skyAuto = v != 0; else if (k == "probe") gSet.probe = v != 0;
+    else if (k == "sky_gain") gSet.skyGain = v; else if (k == "sky_auto") gSet.skyAuto = v != 0; else if (k == "probe") gSet.probe = v != 0; else if (k == "night_light") gSet.nightLight = v;
     else if (k == "sun_follow") gSet.sunFollow = v != 0; else if (k == "sun_flip") gSet.sunFlip = v != 0; else return false;
     return true;
 }
@@ -538,6 +546,7 @@ void gui() {
     changed |= ImGui::SliderFloat("Cloud Sea sky brightness (VV)", &s.skyGain, 0.01f, 1000.0f, "%.3g", ImGuiSliderFlags_Logarithmic);
     changed |= ImGui::Checkbox("... relative to the game's own sky (follows auto-exposure)", &s.skyAuto);
     changed |= ImGui::Checkbox("Expose the sky like the game exposes its frame (average luminance probe)", &s.probe);
+    changed |= ImGui::SliderFloat("Moonlight on the world (night)", &s.nightLight, 1.0f, 10.0f, "%.1fx");
     changed |= ImGui::Checkbox("Sun and moon where the game's are (VV's shadows fit the sky)", &s.sunFollow);
     changed |= ImGui::Checkbox("... flipped", &s.sunFlip);
     changed |= ImGui::SliderFloat("Sky colours -> VV light + reflections", &s.sky, 0.0f, 1.0f);
