@@ -6,6 +6,8 @@
 #include "LyricsCamera.h"
 #include "SkyMaterialScan.h"
 
+namespace rf::sky { std::string worldFxVvStatus(); }
+
 #include <windows.h>
 #include <d3d12.h>
 #include <imgui.h>
@@ -461,6 +463,7 @@ void gui() {
         ImGui::Text("%s: %d shaders learned, %d pipelines, %ld patched, %ld missed%s%s", kKindName[k], gLearned[k].load(), gTagged[k].load(),
                     gStat[k].patched.load(), gStat[k].rejected.load(), why.empty() ? "" : " - ", why.c_str());
     }
+    ImGui::Text("Match pass (beacons, shards, kills): %s", rf::sky::worldFxVvStatus().c_str());
     if (rf::lab::vvTest()) ImGui::TextColored(ImVec4(1, .7f, .3f, 1), "Lab vvtest is on: off this session");
 }
 

@@ -1319,6 +1319,40 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     return out;
 }
 
+/// Vibrant Visuals: the match's moments over VV's HDR frame (worldfx_pass.hlsl PSWorldFxVV), on the sun / star pass's targets
+ComPtr<ID3D12PipelineState> makeWfxVvPso(ID3D12Device* dev, GamePso const& g, bool kills) {
+    ComPtr<ID3D12PipelineState> out;
+#if RF_HAVE_WORLDFX_SHADERS
+    if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
+    d.pRootSignature = gWfxRoot.Get();
+    d.VS = {rf::worldfx::shaders::VSWorldFx, sizeof rf::worldfx::shaders::VSWorldFx};
+    d.PS = kills ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxVVKills, sizeof rf::worldfx::shaders::PSWorldFxVVKills}
+                 : D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxVV, sizeof rf::worldfx::shaders::PSWorldFxVV};
+    for (UINT i = 0; i < 8; ++i) {
+        auto& rt = d.BlendState.RenderTarget[i];
+        rt.RenderTargetWriteMask = i == 0 ? D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE : 0;
+        rt.SrcBlend = D3D12_BLEND_ONE; rt.DestBlend = D3D12_BLEND_ZERO; rt.BlendOp = D3D12_BLEND_OP_ADD;
+        rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_ZERO; rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        rt.LogicOp = D3D12_LOGIC_OP_NOOP;
+    }
+    d.BlendState.IndependentBlendEnable = g.numRt > 1;
+    d.SampleMask                        = UINT_MAX;
+    d.RasterizerState.FillMode          = D3D12_FILL_MODE_SOLID;
+    d.RasterizerState.CullMode          = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable   = FALSE;
+    d.PrimitiveTopologyType             = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.NumRenderTargets                  = g.numRt;
+    for (UINT i = 0; i < g.numRt; ++i) d.RTVFormats[i] = g.rtv[i];
+    d.DSVFormat  = g.dsv;
+    d.SampleDesc = g.sample;
+    if (FAILED(dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&out)))) { wfxStatus("Vibrant Visuals: match pipeline failed"); out.Reset(); }
+#else
+    (void)dev; (void)g; (void)kills;
+#endif
+    return out;
+}
+
 /// get-or-make one of our pipelines for a tagged game pipeline (never while holding gPsoMutex, see afterGameSky)
 // [RF] Our pipelines are built from the game's sky / clouds pipeline state. They used to be made on the render thread
 // the first time each *game pipeline object* drew: on servers (Hive) the game keeps creating new pipeline objects with
@@ -1365,8 +1399,8 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
             // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
-            made.push_back({key, which == 22 ? makeWfxPso(d.Get(), g, false, 0, false, false, false, false, true) : which == 20 ? makeWfxPso(d.Get(), g, false, 0, false, false, true, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
-                                            : which == 4 ? makeWsPso(d.Get(), g) : which == 24 ? makeWsPso(d.Get(), g, true) : makeExtraPso(d.Get(), g, which)});
+            made.push_back({key, which == 24 ? makeWsPso(d.Get(), g, true) : which == 25 || which == 26 ? makeWfxVvPso(d.Get(), g, which == 26) : which == 22 ? makeWfxPso(d.Get(), g, false, 0, false, false, false, false, true) : which == 20 ? makeWfxPso(d.Get(), g, false, 0, false, false, true, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+                                            : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -2202,6 +2236,7 @@ static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
 
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void followLoadedAtmosphere();
+static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, GamePso const& g);
 
 // Vibrant Visuals Live: what the Cloud Sea wants VV's own light, reflections and fog to be this frame (VvLive.cpp).
 // Colours are hues (VV keeps its own brightness and time of day); they follow the same three pictures as the sky
@@ -2546,6 +2581,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     calls.setPso(list, st.pso);
     if (st.haveTopo) calls.setTopo(list, st.topo);
     gSkySinceClear = true;   // this frame's world is being drawn into the buffer now
+    if (g.vv) drawMatchPassVV(list, st, calls, g);   // Vibrant Visuals: beacons, beds, shards, kills, impact frames over VV's frame
     long const n = ++gWsFrames;
     if ((n & 63) == 1) wsStatus("drawing (" + std::to_string(n) + " frames, deck at y " + std::to_string(int(c[15])) + ")");
     return true;
@@ -3765,6 +3801,157 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                                  ", quality " + std::to_string(int(gQuality.load() * 100.0f)) + "%)");
     return true;
 }
+
+// Vibrant Visuals: the World FX pass's match layer (worldfx_pass.hlsl PSWorldFxVV) on VV's HDR frame, right after
+// the Cloud Sea sky went in (the first vanilla sun / star draw: the lit world is in the target, its depth bound).
+// VV does shadows, occlusion, light shafts and the fog itself, so only the match's moments are drawn: team beacons
+// and beds, block shards, death scenes, the crit impact frame, fireworks, the fallen's stars, projectile trails.
+static std::string gWfxVvStatus = "off";
+static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, GamePso const& g) {
+    auto say = [](std::string s) { std::lock_guard l(gWfxMutex); gWfxVvStatus = std::move(s); return false; };
+    WorldFxLook const look = gLook;
+    if (!gWsTexUp.load() || !gWsHeap) return say("waiting for the cloud textures");
+    size_t rt0 = 0, dsv = 0;
+    if (!rf::worldfx::listTargets(list, rt0, dsv)) return say("waiting for the frame's targets");
+    ID3D12Resource* rt = rf::uicapture::rtvResourceOf(rt0);
+    ID3D12Resource* ds = rf::glassarmor::dsvResource(dsv);
+    if (!rt || !ds) return say("frame targets unknown");
+    auto rd = rt->GetDesc(), dd = ds->GetDesc();
+    if (rd.SampleDesc.Count > 1 || dd.SampleDesc.Count > 1) return say("MSAA target: not supported");
+    float flags = 0.0f;
+    switch (rd.Format) {
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: case DXGI_FORMAT_R16G16B16A16_TYPELESS: flags = 2; break;
+    case DXGI_FORMAT_R11G11B10_FLOAT: flags = 4; break;
+    case DXGI_FORMAT_R10G10B10A2_UNORM: case DXGI_FORMAT_R10G10B10A2_TYPELESS: flags = 8; break;
+    case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_TYPELESS: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: flags = 1; break;
+    case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_TYPELESS: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: flags = 0; break;
+    default: return say("colour format " + std::to_string(int(rd.Format)) + " not supported yet (" + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) + ")");
+    }
+    switch (dd.Format) {
+    case DXGI_FORMAT_D32_FLOAT: case DXGI_FORMAT_R32_TYPELESS: case DXGI_FORMAT_R32_FLOAT:
+    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: case DXGI_FORMAT_R32G8X24_TYPELESS: case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS: flags += 16; break;
+    case DXGI_FORMAT_D24_UNORM_S8_UINT: case DXGI_FORMAT_R24G8_TYPELESS: case DXGI_FORMAT_R24_UNORM_X8_TYPELESS: break;
+    default: return say("depth format " + std::to_string(int(dd.Format)) + " not supported yet");
+    }
+    if (g.farZ < 0.5f) flags += 32;   // reversed Z (the vanilla sun / star pass compares GREATER)
+    auto    snap = rf::lyrics::camera();
+    int64_t const now = steadyMs();
+    if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) return say("waiting for the game camera");
+    ComPtr<ID3D12Device> dev;
+    if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
+    if (gTestImpactReq.exchange(0)) {
+        for (int a = 0; a < 3; ++a) gTestImpact.p[a] = float(snap.pos[a]) + snap.forward[a] * 3.0f;
+        gTestImpact.p[1] = float(snap.pos[1]) - 1.62f;
+        gTestImpact.at = steadyMs();
+    }
+    if (gTestKillReq.exchange(0)) {
+        for (int a = 0; a < 3; ++a) gTestKill.p[a] = float(snap.pos[a]) + snap.forward[a] * 6.0f;
+        gTestKill.p[1] = float(snap.pos[1]) - 1.62f;
+        gTestKill.kind = gTestKill.kind == 3 ? 4 : 3;
+        gTestKill.at = steadyMs();
+    }
+    MatchFrame const mf = matchFrame(look);
+    // nothing of the match on screen (no teams, no events, no stars, no trails, no fireworks): the frame is VV's alone
+    bool const any = mf.cb.m0[0] > 0.5f || mf.cb.m0[1] > 0.5f || mf.cb.m2[0] > 0.5f || mf.cb.m2[1] > 0.5f || mf.cb.m4[0] > 0.5f || mf.cb.m1[2] > 0.5f;
+    if (!any) return say("idle (nothing of the match to draw)");
+    bool const killsNow = look.kills && mf.cb.m0[1] > 0.5f && mf.cb.m1[2] > 0.5f;
+    ID3D12PipelineState* pso = killsNow ? derived(dev.Get(), g, 26) : nullptr;
+    if (!killsNow && look.kills) (void)derived(dev.Get(), g, 26);   // warm it up before the first kill needs it
+    if (!pso) pso = derived(dev.Get(), g, 25);
+    if (!pso) return say("building the pipeline (in the background)");
+    if (!gWfxRoot && !makeWfxRoot(dev.Get())) return say("root signature failed");
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
+    UINT64 rTot = 0, dTot = 0;
+    dev->GetCopyableFootprints(&rd, 0, 1, 0, &fpC, nullptr, nullptr, &rTot);
+    dev->GetCopyableFootprints(&dd, 0, 1, 0, &df, nullptr, nullptr, &dTot);
+    if (!rTot || !dTot) return say("frame targets can't be copied");
+    {
+        std::lock_guard l(gWfxMutex);
+        if (!wfxBuffer(dev.Get(), gWfxBufs.scene, gWfxBufs.sceneSize, rTot) || !wfxBuffer(dev.Get(), gWfxBufs.depth, gWfxBufs.depthSize, dTot)) { gWfxVvStatus = "buffers failed"; return false; }
+    }
+    ID3D12Resource* sb = gWfxBufs.scene.Get();
+    ID3D12Resource* db = gWfxBufs.depth.Get();
+    auto const rtState = D3D12_RESOURCE_STATES(rf::glassarmor::stateOf(rt, D3D12_RESOURCE_STATE_RENDER_TARGET));
+    auto const dsState = D3D12_RESOURCE_STATES(rf::glassarmor::stateOf(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE));
+    rf::dred::crumb(list, "World FX VV match pass copy: colour state / depth state / w<<32|h (colour fmt<<48, depth fmt<<56)", rtState, dsState,
+                    (rd.Width << 32) | rd.Height | (UINT64(rd.Format) << 48) | (UINT64(dd.Format) << 56));
+    wfxBarrier(list, rt, rtState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    wfxBarrier(list, ds, dsState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.pResource = sb, dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
+    list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    dst.pResource = db, dst.PlacedFootprint = df, src.pResource = ds, src.SubresourceIndex = 0;
+    list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, rtState);
+    wfxBarrier(list, ds, D3D12_RESOURCE_STATE_COPY_SOURCE, dsState);
+    wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    wfxBarrier(list, db, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (BfMatchFxV1 const* sb2 = gSkinSrc) {   // new skins from Bedrock Forge (the death scenes wear them)
+        uint64_t gen = 0;
+        for (int i = 0; i < 16; ++i) gen = gen * 1315423911ull + sb2->skins[i].gen * 2ull + sb2->skins[i].ok;
+        if (gen != gSkinGen) {
+            gSkinGen = gen;
+            std::vector<uint8_t> px(64 * 1024 * 4, 0);
+            for (int i = 0; i < 16; ++i)
+                if (sb2->skins[i].ok) std::memcpy(px.data() + size_t(i) * 64 * 64 * 4, sb2->skins[i].px, 64 * 64 * 4);
+            if (auto tex = uploadLevels(dev.Get(), list, DXGI_FORMAT_R8G8B8A8_UNORM, 64, 1024, 4, {px.data()})) {
+                if (gWsSkins) gSkinGrave.push_back(gWsSkins);
+                while (gSkinGrave.size() > 4) gSkinGrave.pop_front();
+                gWsSkins = tex;
+                D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+                sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sv.Texture2D.MipLevels = 1;
+                auto hh = gWsHeap->GetCPUDescriptorHandleForHeapStart();
+                hh.ptr += 2 * size_t(dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
+                dev->CreateShaderResourceView(gWsSkins.Get(), &sv, hh);
+            }
+        }
+    }
+    D3D12_GPU_VIRTUAL_ADDRESS const mcb = uploadMatch(dev.Get(), mf.cb);
+    if (!mcb) {
+        wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+        wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+        return say("match buffer failed");
+    }
+    float c[44]{};
+    std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
+    std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
+    std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
+    c[12] = 0.025f; c[13] = 0.0f; c[14] = 0.0f; c[15] = flags;
+    c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
+    c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = 0.0f;
+    c[26] = 0.0f; c[27] = mf.phase;
+    c[28] = float(snap.pos[0]); c[29] = float(snap.pos[1]); c[30] = float(snap.pos[2]);
+    deckOf(mf, c[31], c[32], c[33]);
+    c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
+    c[35] = 0.0f; c[38] = gQuality.load(); c[39] = look.ink;
+    c[43] = std::max(rf::vvlive::skyGain(), 1e-4f);   // how bright "1.0" is in VV's HDR target
+    gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
+    { float const lp[3] = {float(snap.pos[0]), float(snap.pos[1]), float(snap.pos[2])}; rf::deathsfx::setListener(lp, snap.forward); }
+    ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
+    calls.setHeaps(list, 1, heaps);
+    calls.setRootSig(list, gWfxRoot.Get());
+    calls.setConsts(list, 0, 44, c, 0);
+    calls.setTable(list, 3, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
+    list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
+    list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
+    list->SetGraphicsRootConstantBufferView(4, mcb);
+    calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    calls.setPso(list, pso);
+    rf::dred::crumb(list, "World FX VV match pass draw (game pso)", size_t(st.pso));
+    calls.draw(list, 3, 1, 0, 0);
+    wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    calls.restoreRoot(list);
+    calls.setPso(list, st.pso);
+    if (st.haveTopo) calls.setTopo(list, st.topo);
+    static long n = 0;
+    if ((++n & 63) == 1) say("drawing (" + std::to_string(n) + " frames, " + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) + ", colour fmt " +
+                             std::to_string(int(rd.Format)) + ", depth fmt " + std::to_string(int(dd.Format)) + (g.farZ < 0.5f ? ", reversed Z" : "") + ")");
+    return true;
+}
+std::string worldFxVvStatus() { std::lock_guard l(gWfxMutex); return gWfxVvStatus; }
 
 WorldFxLook& worldFxLook() { return gLook; }
 std::string  worldFxStatus() { std::lock_guard l(gWfxMutex); return gWfxStatus; }

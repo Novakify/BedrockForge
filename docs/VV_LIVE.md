@@ -42,3 +42,15 @@ before the game records the pass, so VV's lighting, reflections and fog follow R
 Sliders for every value above (saved to config/VvLive.txt) and a status line per pass: shaders learned, pipelines
 tagged, patches done / missed and why. First checks in game: all three show "pipelines" > 0 and "patched" climbing.
 Test without a match: F6 sky phase preview (golden -> dusk -> night) and F6 test bed (a bed breaks after 23 s).
+
+## 3. The match layer in VV (SkyPass.cpp `drawMatchPassVV`, worldfx_pass.hlsl `PSWorldFxVV`)
+Right after the Cloud Sea sky goes in, the World FX pass's match layer runs on VV's HDR frame: team beacons and beds,
+block shards, death scenes (kill animations), the crit impact frame, fireworks, the fallen's stars, projectile trails.
+- The frame and its depth are copied like on the classic renderer; the shader decodes RGBA16F / R11G11B10F / RGB10A2 /
+  8-bit colour and 32-bit float or D24 depth, reversed Z or not (flags in c3.w).
+- It works in display space like the classic pass (HDR / gain -> toDisplay), and only what it adds goes back into the
+  HDR frame; pixels it doesn't touch are discarded, so VV's own picture stays bit-exact.
+- Not run in VV on purpose: the classic sun shadows / occlusion / rim / light shafts / sea-over-terrain - VV does
+  shadows, AO, volumetric light and (through VV Live) the fog under the islands itself.
+- Status: F6 > Vibrant Visuals Live > "Match pass". It prints the target formats it found.
+- Not in VV yet: haze / mist / ambience, motion blur, the main-menu panorama grab (all read an 8-bit frame).

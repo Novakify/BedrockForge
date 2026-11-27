@@ -116,6 +116,7 @@ std::string matchStatus();
 struct BfSkinView { uint8_t const* px = nullptr; uint32_t gen = 0; };
 int bfSkins(BfSkinView out[16]);
 WorldFxLook& worldFxLook();
+std::string  worldFxVvStatus();   // Vibrant Visuals: the match pass's status (F6 > Vibrant Visuals Live)
 std::string  worldFxStatus();
 float        worldFxGpuMs();        // GPU time of the World FX pass (smoothed), 0 until measured
 bool         worldFxBenchRunning(); // the A/B bench (config/wfxbench.txt) is running

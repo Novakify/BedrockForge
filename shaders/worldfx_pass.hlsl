@@ -55,17 +55,56 @@ ByteAddressBuffer gScene : register(t0); // the colour target, rows of c4.z byte
 ByteAddressBuffer gDepth : register(t1); // D24 in the low 24 bits, rows of c4.w bytes
 
 int2   clampPx(int2 p) { return clamp(p, int2(0, 0), int2(c4.xy) - 1); }
+#if WFX_VV
+// ---- Vibrant Visuals: the frame is linear HDR (pre-exposed) with VV's own depth buffer. c3.w = format flags:
+//      1 BGRA8, 2 RGBA16F, 4 R11G11B10F, 8 RGB10A2; 16 = depth is a 32-bit float, 32 = reversed Z (far = 0).
+//      c10.w = how bright "1.0" is in that target (the same gain the Cloud Sea sky is drawn with). The pass works in
+//      display space like on the classic renderer; only what it ADDS goes back into the HDR frame (PSWorldFxVV).
+float  rawDepth(int2 p) {
+    p = clampPx(p);
+    uint f = uint(c3.w), v = gDepth.Load(uint(p.y) * uint(c4.w) + uint(p.x) * 4u);
+    float d = (f & 16u) ? asfloat(v) : float(v & 0xFFFFFFu) / 16777215.0;
+    return (f & 32u) ? 1.0 - d : d;
+}
+float  uf(uint v, uint mb) {   // unsigned small float: 5-bit exponent over mb mantissa bits (R11G11B10F)
+    uint e = v >> mb, m = v & ((1u << mb) - 1u);
+    float fm = float(m) / float(1u << mb);
+    return e == 0u ? fm * 6.1035156e-5 : (e == 31u ? 65000.0 : (1.0 + fm) * exp2(float(e) - 15.0));
+}
+float3 hdrAt(int2 p) {
+    p = clampPx(p);
+    uint f = uint(c3.w);
+    if (f & 2u) {
+        uint2 v = gScene.Load2(uint(p.y) * uint(c4.z) + uint(p.x) * 8u);
+        return min(float3(f16tof32(v.x & 0xFFFFu), f16tof32(v.x >> 16), f16tof32(v.y & 0xFFFFu)), 65000.0);
+    }
+    uint v = gScene.Load(uint(p.y) * uint(c4.z) + uint(p.x) * 4u);
+    if (f & 4u) return float3(uf(v & 0x7FFu, 6u), uf((v >> 11) & 0x7FFu, 6u), uf(v >> 22, 5u));
+    if (f & 8u) return float3(v & 1023u, (v >> 10) & 1023u, (v >> 20) & 1023u) / 1023.0;
+    float3 c = float3(v & 255u, (v >> 8) & 255u, (v >> 16) & 255u) / 255.0;
+    return (f & 1u) ? c.bgr : c;
+}
+float3 fromDisplay(float3 d) {   // the inverse of toDisplay (cloud_sea_common.hlsli)
+    float3 y = pow(max(d, 0.0), 2.2);
+    float3 k = max(y - 0.55, 0.0);
+    return min(y, 0.55) + k / max(1.0 - k * 1.9, 0.02);
+}
+float4 sceneAt(int2 p) { return float4(toDisplay(hdrAt(p) / max(c10.w, 1e-4)), 1.0); }
+#else
 float  rawDepth(int2 p) { p = clampPx(p); return float(gDepth.Load(uint(p.y) * uint(c4.w) + uint(p.x) * 4u) & 0xFFFFFFu) / 16777215.0; }
+#endif
 bool   isSky(float d) { return d >= 0.99999; }
 // distance along the camera's forward axis. Bedrock's world depth is standard 0..1 with near = c3.x (0.025): checked
 // against a probe frame (ground rows fit n / (1 - d) exactly); the camera snapshot's projection is not the world's.
 float  viewZ(float d) { return c3.x / max(1.0 - d, 1e-7); }
+#if !WFX_VV
 float4 sceneAt(int2 p) {
     p = clampPx(p);
     uint  v = gScene.Load(uint(p.y) * uint(c4.z) + uint(p.x) * 4u);
     float4 c = float4(v & 255u, (v >> 8) & 255u, (v >> 16) & 255u, v >> 24) / 255.0;
     return c3.w > 0.5 ? c.bgra : c;
 }
+#endif
 // camera-relative position of pixel p (centre) at view distance z
 float3 posAt(float2 p, float z) {
     float2 ndc = float2(p.x / c4.x * 2.0 - 1.0, 1.0 - p.y / c4.y * 2.0);
@@ -2164,3 +2203,27 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     return r;
 }
+
+#if WFX_VV
+// Vibrant Visuals: the match's moments (team beacons and beds, block shards, death scenes, impact frames, fireworks,
+// the fallen's stars, projectile trails) over VV's own frame. VV already does the sun shadows, occlusion, light
+// shafts and the fog under the islands itself, so none of the classic look runs here - and pixels nothing touches keep
+// their exact HDR value.
+float4 PSWorldFxVV(VSOut i) : SV_Target {
+    int2   px = int2(i.pos.xy);
+    float  d  = rawDepth(px);
+    bool   sk = isSky(d);
+    CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z;
+    float3 P  = sk ? posAt(float2(px) + 0.5, 1.0) : posPx(px);
+    float3 rd = normalize(P);
+    float  t  = sk ? 1e9 : length(P);
+    float3 hdr = hdrAt(px);
+    float3 sd  = toDisplay(hdr / max(c10.w, 1e-4));
+    float3 o;
+    [branch] if (m1.z > 0.5 && impactLive()) o = impactFrame(sd, rd, t);
+    else o = matchOver(sd, rd, t);
+    float3 dl = fromDisplay(o) - fromDisplay(sd);
+    if (dot(abs(o - sd), 1.0) < 1.0 / 512.0) discard;   // untouched: the game's own pixel stays, bit for bit
+    return float4(max(hdr + dl * c10.w, 0.0), 1.0);
+}
+#endif

@@ -13,6 +13,9 @@ entries = [("shaders/cloud_sea.hlsl", "VSCloudSea", "vs_6_0"), ("shaders/cloud_s
            # the same two with the death scenes - bound only on frames where a kill is playing
            ("shaders/worldfx_pass.hlsl", "PSWorldFx", "ps_6_0", "PSWorldFxKills", ["WFX_KILLS=1"]),
            ("shaders/worldfx_pass.hlsl", "PSWorldFx", "ps_6_0", "PSWorldFxGlassKills", ["NG_RIM=1", "WFX_KILLS=1"]),
+           # Vibrant Visuals: the match's moments over VV's HDR frame (lean, and with the death scenes)
+           ("shaders/worldfx_pass.hlsl", "PSWorldFxVV", "ps_6_0", "PSWorldFxVV", ["WFX_VV=1"]),
+           ("shaders/worldfx_pass.hlsl", "PSWorldFxVV", "ps_6_0", "PSWorldFxVVKills", ["WFX_VV=1", "WFX_KILLS=1"]),
            ("shaders/worldfx_blur.hlsl", "PSWorldFxBlur", "ps_6_0"),
            ("shaders/worldfx_fade.hlsl", "PSWorldFxFade", "ps_6_0"),   # [Sky] crossfade between skies   # camera motion blur on the world targets (before hand + HUD)
            ("shaders/worldfx_atmos.hlsl", "PSWorldFxAtmos", "ps_6_0"),
