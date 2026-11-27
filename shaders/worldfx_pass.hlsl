@@ -1044,14 +1044,16 @@ float3 hitOn(float3 W, float3 lin) {
     [loop] for (int i = 0; i < ne; i++) {
         if (eB[i].w < 7.5 || eB[i].w > 8.5) continue;
         float age = eA[i].w, who = eC[i].z;
-        if (who > 1.5) continue;                                     // you: you are not on your own screen
+        if (who > 1.5 || who < 0.5) continue;                        // you: you are not on your own screen
+        // (Fernando 2026-11-27: "the weird pink hue keeps happening, especially with a lot of players - FFA SkyWars")
+        // every hit by anyone within 64 blocks flashed the victim's column in their nametag colour (pink / magenta
+        // with no team): a full lobby fighting = pink flicker all over. Only your own hits now, in white.
         float3 c = eA[i].xyz + float3(0.5, 0.0, 0.5);
         float2 dxz = W.xz - c.xz;
         float  hy = W.y - c.y;
         if (dot(dxz, dxz) > 0.75 * 0.75 || hy < -0.1 || hy > 2.05) continue;   // the body's column
-        float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
-        team = team / max(max(team.r, max(team.g, team.b)), 0.05);
-        float k = who > 0.5 ? 1.0 : 0.6;
+        float3 team = float3(1.0, 1.0, 1.0);
+        float k = 0.5;
         // (the white strike frame on every hit is gone - Fernando: impact frames only on crits / mace hits, see impactFrame)
         if (age > 0.02 && age < 0.16) lin += team * (lin * 2.5 + 0.06) * k * (1.0 - (age - 0.045) / 0.115);
     }
