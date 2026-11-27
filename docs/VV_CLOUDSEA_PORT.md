@@ -143,3 +143,38 @@ Bows and arrows (BF already sends projectile trails; the VV match layer draws th
     far below.
 35. **Pearl landing burst.** Ender pearl lands in a soft cloud burst that hangs a moment (pairs with idea 12).
 36. **Snowballs / eggs as cloud puffs.** Tiny puffs instead of the vanilla particles.
+
+### H. Every idea follows the sky (Fernando, Nov 26 23:43)
+Rule: nothing has one fixed look. Every effect in A-G reads the same sky state as the Cloud Sea itself and changes
+with it - day effects are lit like day, night effects contrast the moonlit night, and the eclipse and the storm each
+get their own version. One shared input drives all of them (RF already has it: the phase 0 golden -> 1 dusk -> 2 night,
+plus two new states), so they all shift together and never disagree with the sky.
+
+Sky states: **Day** (golden hour), **Dusk**, **Night** (big amber -> silver moon), **Eclipse** (final two teams),
+**Storm** (overtime). Transitions blend over the same time the sky takes; nothing pops.
+
+| Idea | Day | Dusk | Night | Eclipse | Storm |
+|---|---|---|---|---|---|
+| Sunlight through cracks (24) | warm gold leaking out | deep amber | cold moonlight, silver-blue | corona-white thin ring of light | flicker with the lightning |
+| Wool breaks into weather (25) | sunlit cream puff | rose puff | pearl-blue puff with a moonlit rim | puff goes dark, edge-lit by the corona | grey puff torn sideways by wind |
+| Obsidian mirror (26) | reflects the gold sky | reflects the afterglow | reflects the moon and stars (the contrast piece) | reflects the ring | reflects lightning only |
+| End stone moon rock (27) | pale, sun-baked | warm grey | silver subsurface glow | dim, ring-lit | wet, darker |
+| Blades hold the sky (29) | sunset streak on the edge | ember edge | moon glint, cool steel | a single white ring glint | blue-white flashes on each strike |
+| Crit contrail (30) | sunlit vapour | pink vapour | silver vapour, slight glow (stands out against the dark) | black vapour with a white rim | sparks instead of vapour |
+| Tally stars (31) | faint gold flecks | brighter | fully lit like real stars | blaze white | crackle |
+| Arrow contrails (32) | lit gold on the sun side | rose | moonlit silver with the team-colour edge glowing (reads clearly at night) | dark trails edged by the corona | torn short by the wind, rain-streaked |
+| Charge flare (33) | tiny sun | ember | tiny moon (cool white) | a corona ring at the tip | an electric spark |
+| Void ripple (34) | gold ring on sunlit cloud tops | rose ring | silver ring on moonlit tops | ring in the eclipse shadow | ring shattered by the rain |
+| Pearl burst (35) | sunlit puff | rose puff | silver puff | dark puff, bright rim | wind-torn puff |
+| Bed lights (7) | soft, nearly invisible in daylight | warming up | full team-colour glow pooling on the clouds (the night showpiece) | glow brightens as the sky darkens | flicker as lightning hits |
+| Bridge wake (9) | faint | visible | bright team trail on the dark sea | bright | short-lived (rain washes it) |
+| Cloud wake (12) | hole lit gold from below | rose | hole lit by the moon, silver edges | dark hole, ring-lit rim | hole closes fast |
+| Victory dawn (5) | (it is the day) | - | night -> sunrise is the whole effect | eclipse lifts, ring breaks into dawn | storm clears to a rainbow over the sea |
+
+Design notes:
+- Night is about contrast: effects get cooler and brighter against the dark (moon silver, team colours glow), never
+  just a dimmer copy of the day look.
+- Eclipse is black-and-white with the corona as the only light; team colours survive as edges.
+- Storm is motion and flashes: things tear, streak and flicker with the lightning; colours desaturate between strikes.
+- Implementation: one shared "sky state" (phase + eclipse + storm weights) sent to every effect - the sky shader,
+  the match layer, VV Live and the item / block looks - so they can never drift apart.
