@@ -1,0 +1,35 @@
+{
+  "format_version": "1.21.120",
+  "minecraft:client_biome": {
+    "description": {
+      "identifier": "minecraft:redwood_taiga_hills_mutated"
+    },
+    "components": {
+      "minecraft:fog_appearance": {
+        "fog_identifier": "novak:fog_ow"
+      },
+      "minecraft:water_appearance": {
+        "surface_color": "#44AFF5"
+      },
+      "minecraft:atmosphere_identifier": {
+        "atmosphere_identifier": "novak:ow_atmospherics"
+      },
+      "minecraft:color_grading_identifier": {
+        "color_grading_identifier": "novak:ow_color_grading"
+      },
+      "minecraft:lighting_identifier": {
+        "lighting_identifier": "novak:ow_lighting"
+      },
+      "minecraft:ambient_sounds": {
+        "underwater_addition": {
+          "asset": "ambient.underwater.additions",
+          "chance": 0.01
+        },
+        "underwater_loop": "ambient.underwater.loop"
+      },
+      "minecraft:biome_music": {
+        "music_definition": "redwood_taiga_hills_mutated"
+      }
+    }
+  }
+}

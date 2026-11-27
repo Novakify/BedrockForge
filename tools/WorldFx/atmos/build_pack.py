@@ -159,10 +159,12 @@ def main():
         "format_version": 2,
         "header": {"name": f"{cfg['name']} by Novak",
                    "description": f"World FX atmosphere: {cfg['name']}. Block, item and bed art: Faithful 32x by the Faithful team (faithfulpack.net, graded) - see CREDITS.txt",
-                   "uuid": cfg["uuid"], "version": [0, 2, 0], "min_engine_version": [1, 21, 0]},
-        "modules": [{"type": "resources", "uuid": cfg["module_uuid"], "version": [0, 2, 0]}],
+                   "uuid": cfg["uuid"], "version": [0, 3, 0], "min_engine_version": [1, 21, 0]},
+        "modules": [{"type": "resources", "uuid": cfg["module_uuid"], "version": [0, 3, 0]}],
     }
     (pack / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    import vv   # the Vibrant Visuals layer: sky, light, cloud-deck fog, grade, biome routing (+ the pbr capability)
+    print(f"{vv.write(pack, a.atmosphere)} Vibrant Visuals files")
     if getattr(m, "BASE", None) == "faithful":
         (pack / "CREDITS.txt").write_text(
             "Cloud Sea by Novak\n\nBlock, item and bed textures: Faithful 32x (Bedrock) by the Faithful team,\n"

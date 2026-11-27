@@ -53,3 +53,15 @@ every frame (SkyPass `matchFrame`, cbuffer b1 of worldfx_pass.hlsl).
 - Fixed on the way: the cloud deck stayed at the last world's height (swallowed everything below the horizon on Hive);
   shadows were near-black pits; night left Hive maps too bright.
 - Not yet checked: placement pop, perf with many players (FPS 105-160 seen in matches, 200+ before).
+
+## Vibrant Visuals (2026-11-26)
+- Pack layer: `tools/WorldFx/atmos/vv.py` (run by build_pack.py, or on its own) writes the Cloud Sea's VV data into
+  `packs/WorldFxCloudSea`: atmospherics (warm noon, amber sunset over a violet zenith, moonlit navy night), lighting
+  (golden sun, moon 2.5 amber -> silver), a volumetric cloud deck (thick at y <= 10, gone by y 46, warm forward
+  scattering), colour grade (hable, warmer), all 83 overworld biomes routed; manifest 0.3.0 + `pbr`. Works on a plain
+  VV client (the Hive too) with no Bedrock Forge. Values rest on the in-game tests in
+  `Research/VibrantVisuals/docs/VV_TESTED.md`.
+- RF (`cloudsea-vv/rf`): the Cloud Sea sky draws in VV, and VV Live drives VV's own light / reflections / fog from the
+  sky and the match (RF docs/VV_LIVE.md).
+- Not in VV yet: the World FX pass (block shadows / AO / rim, beacons, shards, kill scenes) and the CloudSea block
+  shaderpack (classic RenderChunk) - VV draws blocks through its own deferred materials.
