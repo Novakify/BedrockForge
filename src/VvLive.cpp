@@ -5,6 +5,7 @@
 #include "LLShim.h"
 #include "LyricsCamera.h"
 #include "SkyMaterialScan.h"
+#include "VvLiveTable.h"
 
 namespace rf::sky { std::string worldFxVvStatus(); }
 
@@ -30,28 +31,17 @@ namespace rf::vvlive {
 namespace {
 namespace fs = std::filesystem;
 
-// ------------------------------------------------------------------ what we patch (bgfx uniform table, MC 1.26.51)
-enum Kind : int { None = 0, Deferred = 1, Probe = 2, Populate = 3, KindCount = 4 };
-char const* const kKindName[KindCount] = {"-", "lighting (DeferredShading)", "sky probe (SkyProbeDeferredShading)", "fog volume (PopulateVolume)"};
-struct Layout {
-    int size;                    // bytes of the stage's uniforms
-    int mat[2];                  // offsets of rotation matrices (u_view / u_invView) used to recognise the buffer, -1 none
-    int unit[2];                 // offsets of unit vectors (SunDir, MoonDir, light direction), -1 none
-    int zen, hor, sunCol, moonCol, dirLight, heightFog, airAlbedo;   // -1: not in this stage
-};
-constexpr Layout kLayout[KindCount] = {
-    {0, {-1, -1}, {-1, -1}, -1, -1, -1, -1, -1, -1, -1},
-    // DoDeferredShading fragment: u_view 0, SunDir 64, u_invView 80, MoonDir 1040, DirectionalLightSourceDiffuseColorAndIlluminance
-    // 1712, MoonColor 1936, SkyHorizonColor 2016, SkyZenithColor 2048, SunColor 2096 (2176 bytes)
-    {2176, {0, 80}, {64, 1040}, 2048, 2016, 2096, 1936, 1712, -1, -1},
-    // SkyProbe DoDeferredShading fragment: u_invView 0, SkyZenithColor 192, MoonDir 272, MoonColor 368, SunDir 384,
-    // SkyHorizonColor 448, SunColor 480 (560 bytes)
-    {560, {0, -1}, {272, 384}, 192, 448, 480, 368, -1, -1, -1},
-    // Populate compute: u_view 80, DirectionalLightSourceWorldSpaceDirection 208, HeightFogScaleBias 272, AirAlbedoExtinction 288,
-    // DirectionalLightSourceDiffuseColorAndIlluminance 368 (528 bytes). density = AirAlbedoExtinction.w *
-    // saturate(HeightFogScaleBias.x * y + HeightFogScaleBias.y), y = height relative to the camera (read off the shader)
-    {528, {80, -1}, {208, -1}, -1, -1, -1, -1, 368, 272, 288},
-};
+// ------------------------------------------------------------------ what we patch
+// VvLiveTable.h (generated from the game's .material.bin files, tools/gen_vvlive_table.py): one row per shader of VV's
+// lighting materials (DeferredShading, the mixed-resolution family the game actually runs, DeferredWater), the sky
+// probe and the fog volume, with the byte offset of every uniform RF touches. A pipeline whose shader is not in the
+// table is left alone - after a game update the table has to be regenerated, nothing is guessed.
+using table::Row;
+namespace R = table;
+constexpr int kRowCount = int(sizeof(table::kRows) / sizeof(table::kRows[0]));
+enum Group : int { GLight = 0, GSky = 1, GFog = 2, GroupCount = 3 };
+char const* const kGroupName[GroupCount] = {"direct / ambient light", "sky colours (lighting, sky probe, water)", "fog volume"};
+int groupOf(Row const& r) { return r.compute ? GFog : (r.off[R::Zen] >= 0 || r.off[R::Hor] >= 0 ? GSky : GLight); }
 
 // ------------------------------------------------------------------ settings (config/VvLive.txt)
 struct Settings {
@@ -80,37 +70,44 @@ void saveConfig() {
       << "\nsky_gain " << s.skyGain << "\n";
 }
 
-// ------------------------------------------------------------------ learned shaders + tagged pipelines
-std::unordered_map<uint64_t, int> gHashKind;   // written at boot (learn), read-only afterwards
-std::atomic<int>                 gLearned[KindCount]{};
-constexpr int                    kSlots = 64;
-std::atomic<void*>               gSlotPso[kSlots]{};
-std::atomic<int>                 gSlotKind[kSlots]{};
-std::atomic<int>                 gUsed{0};
-std::atomic<int>                 gTagged[KindCount]{};
+// ------------------------------------------------------------------ tagged pipelines
+constexpr int       kSlots = 128;
+std::atomic<void*>  gSlotPso[kSlots]{};
+std::atomic<int>    gSlotRow[kSlots]{};
+std::atomic<int>    gUsed{0};
+std::atomic<int>    gTagged[GroupCount]{};
 
-int kindOfPso(void* pso) {
+int rowOfHash(uint64_t h) {
+    int lo = 0, hi = kRowCount - 1;
+    while (lo <= hi) {
+        int const mid = (lo + hi) / 2;
+        if (table::kRows[mid].hash == h) return mid;
+        if (table::kRows[mid].hash < h) lo = mid + 1; else hi = mid - 1;
+    }
+    return -1;
+}
+int rowOfPso(void* pso) {
     int const n = gUsed.load(std::memory_order_acquire);
     for (int i = 0; i < n; ++i)
-        if (gSlotPso[i].load(std::memory_order_relaxed) == pso) return gSlotKind[i].load(std::memory_order_relaxed);
-    return None;
+        if (gSlotPso[i].load(std::memory_order_relaxed) == pso) return gSlotRow[i].load(std::memory_order_relaxed);
+    return -1;
 }
 void tag(void* pso, uint64_t h) {
     if (!pso) return;
-    int const k = [&] { auto it = gHashKind.find(h); return it == gHashKind.end() ? 0 : it->second; }();
+    int const row = rowOfHash(h);
     int const n = gUsed.load(std::memory_order_acquire);
     for (int i = 0; i < n; ++i)   // a new pipeline at a dead one's address: its old tag is gone
-        if (gSlotPso[i].load(std::memory_order_relaxed) == pso) { gSlotKind[i].store(k, std::memory_order_relaxed); if (k) ++gTagged[k]; return; }
-    if (!k) return;
+        if (gSlotPso[i].load(std::memory_order_relaxed) == pso) { gSlotRow[i].store(row, std::memory_order_relaxed); if (row >= 0) ++gTagged[groupOf(table::kRows[row])]; return; }
+    if (row < 0) return;
     static std::mutex m;
     std::lock_guard l(m);
     int const i = gUsed.load();
     if (i >= kSlots) return;
-    gSlotKind[i].store(k);
+    gSlotRow[i].store(row);
     gSlotPso[i].store(pso);
     gUsed.store(i + 1, std::memory_order_release);
-    ++gTagged[k];
-    ll_shim::info(std::string("[RF] VV Live: tagged the game's ") + kKindName[k] + " pipeline");
+    int const g = groupOf(table::kRows[row]);
+    if (++gTagged[g] <= 3) ll_shim::info(std::string("[RF] VV Live: tagged a ") + kGroupName[g] + " pipeline (table row " + std::to_string(row) + ")");
 }
 
 // ------------------------------------------------------------------ mapped upload buffers: GPU address -> CPU pointer
@@ -175,7 +172,7 @@ void STDMETHODCALLTYPE unmapHook(ID3D12Resource* r, UINT sub, D3D12_RANGE const*
 }
 
 // ------------------------------------------------------------------ per-command-list state (lock-free, per thread)
-struct LS { void* list = nullptr; int kind = 0; uint64_t g[8]{}, c[8]{}; };
+struct LS { void* list = nullptr; int row = -1; uint64_t g[8]{}, c[8]{}; };
 thread_local LS  tl[4];
 thread_local int tlNext = 0;
 LS& ls(void* list) {
@@ -190,7 +187,9 @@ std::atomic<bool> gArmed{false};   // enabled, an RF sky drives VV, and somethin
 Drive             gDrive;
 std::mutex        gDriveMx;
 std::atomic<uint64_t> gFrame{0};
-struct Stat { std::atomic<long> patched{0}, rejected{0}; std::atomic<int> idx{-1}, base{-1}; std::string why; } gStat[KindCount];
+struct Stat { std::atomic<long> patched{0}, rejected{0}; std::string why; } gStat[GroupCount];
+std::atomic<int> gRowIdx[kRowCount], gRowBase[kRowCount];   // where each shader's uniforms were found (root CBV, byte offset); -1 unknown
+struct RowInit { RowInit() { for (auto& a : gRowIdx) a = -1; for (auto& a : gRowBase) a = -1; } } gRowInit;
 std::mutex gStatMx;
 
 // SEH-guarded copies (an upload buffer can die under us between Map bookkeeping and the patch)
@@ -211,11 +210,10 @@ bool isRot(float const* m) {   // the 3x3 part of a 4x4 (either major order): or
     }
     return true;
 }
-bool matches(int k, uint8_t const* blk) {
-    Layout const& L = kLayout[k];
+bool matches(Row const& L, uint8_t const* blk) {
     float f[16];
-    for (int m : L.mat) if (m >= 0) { std::memcpy(f, blk + m, 64); if (!isRot(f)) return false; }
-    for (int u : L.unit) if (u >= 0) { std::memcpy(f, blk + u, 16); if (!isUnit(f)) return false; }
+    for (int r : {R::UView, R::UInvView}) if (L.off[r] >= 0) { std::memcpy(f, blk + L.off[r], 64); if (!isRot(f)) return false; }
+    for (int r : {R::SunDir, R::MoonDir, R::DirLightDir}) if (L.off[r] >= 0) { std::memcpy(f, blk + L.off[r], 16); if (!isUnit(f)) return false; }
     return true;
 }
 
@@ -229,24 +227,25 @@ void hueTo(float* c, float const* t, float k) {
 }
 
 /// rewrite one tagged pass's uniforms before the game records it
-void patch(int k, uint64_t const* cbv) {
-    Layout const& L = kLayout[k];
-    auto& st = gStat[k];
+void patch(int row, uint64_t const* cbv) {
+    Row const& L = table::kRows[row];
+    auto& st = gStat[groupOf(L)];
+    if (L.size > 4096) return;
     uint8_t* p = nullptr;
-    int      idx = st.idx.load(), base = st.base.load();
-    alignas(16) uint8_t blk[2304];
+    int      idx = gRowIdx[row].load(), base = gRowBase[row].load();
+    alignas(16) uint8_t blk[4096];
     auto readAt = [&](int i, int b) -> uint8_t* {
         if (i < 0 || i > 7 || !cbv[i]) return nullptr;
         uint8_t* q = cpuOf(cbv[i] + uint64_t(b), uint64_t(L.size));
         if (!q || !sehRead(blk, q, size_t(L.size))) return nullptr;
-        return matches(k, blk) ? q : nullptr;
+        return matches(L, blk) ? q : nullptr;
     };
     if (idx >= 0) p = readAt(idx, base);
-    if (!p) {   // find which root constant buffer (and where in it) this stage's uniforms are
-        static thread_local uint64_t lastTry[KindCount]{};
+    if (!p) {   // find which root constant buffer (and where in it) this shader's uniforms are
+        static thread_local uint64_t lastTry[kRowCount]{};
         uint64_t const fr = gFrame.load(std::memory_order_relaxed);
-        if (lastTry[k] == fr) return;
-        lastTry[k] = fr;
+        if (lastTry[row] == fr + 1) return;
+        lastTry[row] = fr + 1;
         for (int i = 0; i < 8 && !p; ++i)
             for (int b = 0; b <= 512 && !p; b += 16)
                 if ((p = readAt(i, b))) { idx = i, base = b; }
@@ -257,44 +256,53 @@ void patch(int k, uint64_t const* cbv) {
             st.why = n ? "uniforms not recognised in the " + std::to_string(n) + " bound constant buffers" : "no root constant buffer bound";
             return;
         }
-        if (st.idx.exchange(idx) != idx || st.base.exchange(base) != base)
-            ll_shim::info(std::string("[RF] VV Live: ") + kKindName[k] + " uniforms found (root " + std::to_string(idx) + ", +" + std::to_string(base) + " bytes)");
+        if (gRowIdx[row].exchange(idx) != idx || gRowBase[row].exchange(base) != base)
+            ll_shim::info(std::string("[RF] VV Live: ") + kGroupName[groupOf(L)] + " uniforms found (table row " + std::to_string(row) + ", root " + std::to_string(idx) + ", +" + std::to_string(base) + " bytes)");
     }
     {   // the same buffer twice in a frame (a pass drawn twice): patch it once - hue shifts must not stack
-        static std::atomic<uint64_t> lastVa[KindCount]{}, lastFr[KindCount]{};
-        uint64_t const va = cbv[idx] + uint64_t(base), fr = gFrame.load(std::memory_order_relaxed);
-        if (lastVa[k].exchange(va) == va && lastFr[k].exchange(fr) == fr) return;
-        lastFr[k] = fr;
+        static std::atomic<uint64_t> lastVa[kRowCount]{}, lastFr[kRowCount]{};
+        uint64_t const va = cbv[idx] + uint64_t(base), fr = gFrame.load(std::memory_order_relaxed) + 1;
+        bool const sameVa = lastVa[row].exchange(va) == va, sameFr = lastFr[row].exchange(fr) == fr;
+        if (sameVa && sameFr) return;
     }
     Drive d;
     Settings s;
     { std::lock_guard l(gDriveMx); d = gDrive; }
     { std::lock_guard l(gSetMx); s = gSet; }
-    auto f4 = [&](int off) { return reinterpret_cast<float*>(blk + off); };
+    auto f4 = [&](int role) { return reinterpret_cast<float*>(blk + L.off[role]); };
     std::vector<std::pair<int, int>> dirty;   // (offset, bytes)
-    auto hue = [&](int off, float const* t, float kk) { if (off < 0) return; hueTo(f4(off), t, kk); dirty.push_back({off, 12}); };
-    hue(L.zen, d.zen, s.sky);
-    hue(L.hor, d.hor, s.sky);
-    hue(L.sunCol, d.key, s.light);
-    hue(L.moonCol, d.key, s.light * 0.6f);
-    hue(L.dirLight, d.key, s.light);
-    if (s.pulse && d.pulse > 0.0f) hue(L.dirLight, d.pulseCol, d.pulse * 0.30f);
-    if (L.airAlbedo >= 0) {
-        float* a = f4(L.airAlbedo);
+    auto hue = [&](int role, float const* t, float kk) { if (L.off[role] < 0) return; hueTo(f4(role), t, kk); dirty.push_back({L.off[role], 12}); };
+    float amb[3];   // the light the sky itself gives: between its zenith and its horizon
+    for (int i = 0; i < 3; ++i) amb[i] = d.zen[i] / std::max(lum(d.zen), 1e-5f) * 0.45f + d.hor[i] / std::max(lum(d.hor), 1e-5f) * 0.55f;
+    hue(R::Zen, d.zen, s.sky);
+    hue(R::Hor, d.hor, s.sky);
+    hue(R::FogCol, d.hor, s.sky);
+    hue(R::SkyAmb, amb, s.sky * 0.8f);
+    hue(R::Sun, d.key, s.light);
+    hue(R::Moon, d.key, s.light * 0.6f);
+    hue(R::DirLight, d.key, s.light);
+    if (s.pulse && d.pulse > 0.0f) hue(R::DirLight, d.pulseCol, d.pulse * 0.30f);
+    if (L.off[R::AirAlbedo] >= 0) {
+        float* a = f4(R::AirAlbedo);
         hueTo(a, d.air, s.air);
         if (s.pulse && d.pulse > 0.0f) hueTo(a, d.pulseCol, d.pulse * 0.60f);
         if (s.deck) a[3] = s.deckExt * (1.0f + 0.8f * d.closeIn) * (1.0f + 0.6f * (s.pulse ? d.pulse : 0.0f));
-        dirty.push_back({L.airAlbedo, 16});
+        if (d.impact != 0.0f) {   // the impact frame in the air: every bit of fog goes flat white, then flat black
+            float const w = d.impact > 0.0f ? 1.0f : 0.0f;
+            a[0] = a[1] = a[2] = w;
+            a[3] = std::max(a[3], 0.02f) * (d.impact > 0.0f ? 1.5f : 3.0f);
+        }
+        dirty.push_back({L.off[R::AirAlbedo], 16});
     }
-    if (L.heightFog >= 0 && s.deck) {
+    if (L.off[R::HeightFog] >= 0 && s.deck) {
         auto const cam = rf::lyrics::camera();
         if (cam.valid) {
             float const top = d.deckTop + d.closeIn * s.rise;
             float const T   = std::max(4.0f, s.deckThk * (1.0f + 0.5f * d.closeIn));
-            float* h = f4(L.heightFog);
+            float* h = f4(R::HeightFog);
             h[0] = -1.0f / T;                                   // thicker going down ...
             h[1] = (top - float(cam.pos[1])) / T;               // ... from nothing at the deck's top (y is camera-relative)
-            dirty.push_back({L.heightFog, 8});
+            dirty.push_back({L.off[R::HeightFog], 8});
         }
     }
     bool ok = true;
@@ -321,7 +329,7 @@ void STDMETHODCALLTYPE setComputeCbvHook(ID3D12GraphicsCommandList* l, UINT i, D
 void STDMETHODCALLTYPE dispatchHook(ID3D12GraphicsCommandList* l, UINT x, UINT y, UINT z) {
     if (gArmed.load(std::memory_order_relaxed)) {
         LS& s = ls(l);
-        if (s.kind == Populate) patch(Populate, s.c);
+        if (s.row >= 0 && table::kRows[s.row].compute) patch(s.row, s.c);
     }
     reinterpret_cast<Dispatch_t>(gOrigDispatch)(l, x, y, z);
 }
@@ -337,23 +345,21 @@ void rearm() {
 
 // ------------------------------------------------------------------ API
 void learn(fs::path const& dir) {
-    struct M { char const* file; char const* pass; char const* stage; int kind; };
-    static constexpr M kM[] = {{"DeferredShading", "DoDeferredShading", "Fragment", Deferred},
-                               {"SkyProbeDeferredShading", "DoDeferredShading", "Fragment", Probe},
-                               {"PopulateVolume", "Populate", "Compute", Populate}};
-    for (auto const& m : kM) {
-        std::ifstream f(dir / (std::string(m.file) + ".material.bin"), std::ios::binary);
-        if (!f) { ll_shim::warn(std::string("[RF] VV Live: ") + m.file + ".material.bin not found"); continue; }
+    // how many of the table's shaders this game build really has (0 = another game version: regenerate VvLiveTable.h)
+    int have = 0, files = 0;
+    std::error_code ec;
+    for (auto const& e : fs::directory_iterator(dir, ec)) {
+        auto const name = e.path().filename().string();
+        if (name.rfind("Deferred", 0) != 0 && name.rfind("SkyProbe", 0) != 0 && name.rfind("PopulateVolume", 0) != 0) continue;
+        std::ifstream f(e.path(), std::ios::binary);
+        if (!f) continue;
+        ++files;
         std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)), {});
-        int n = 0;
         for (auto const& s : rf::skyscan::scan(d.data(), d.size()))
-            if (s.stage == m.stage && s.pass == m.pass && (s.platform == "Direct3D_SM60" || s.platform == "Direct3D_SM65")) {
-                gHashKind[s.hash] = m.kind;
-                ++n;
-            }
-        gLearned[m.kind] += n;
-        ll_shim::info(std::string("[RF] VV Live: learned ") + std::to_string(n) + " " + kKindName[m.kind] + " shaders");
+            if (rowOfHash(s.hash) >= 0) ++have;
     }
+    ll_shim::info("[RF] VV Live: " + std::to_string(have) + " shaders of this game match the table (" + std::to_string(kRowCount) + " rows, " + std::to_string(files) +
+                  " material files)" + (have ? "" : " - none: the game was updated, VV Live stays off until the table is regenerated"));
 }
 
 void loadConfig(fs::path const& configDir) {
@@ -396,7 +402,7 @@ void onGameDevice(ID3D12Device* dev) {
     if (SUCCEEDED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc))) && alloc &&
         SUCCEEDED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc, nullptr, IID_PPV_ARGS(&list))) && list) {
         void** lv = *reinterpret_cast<void***>(list);
-        rc3 = ll_shim::hook(lv[39], reinterpret_cast<void*>(&setComputeCbvHook), &gOrigCCbv);   // SetComputeRootConstantBufferView
+        rc3 = ll_shim::hook(lv[37], reinterpret_cast<void*>(&setComputeCbvHook), &gOrigCCbv);   // SetComputeRootConstantBufferView
         rc4 = ll_shim::hook(lv[14], reinterpret_cast<void*>(&dispatchHook), &gOrigDispatch);    // Dispatch
         list->Close();
     }
@@ -409,7 +415,7 @@ void onGameDevice(ID3D12Device* dev) {
 void onCreatedGraphicsPso(ID3D12PipelineState* pso, uint64_t h) { tag(pso, h); }
 void onSetPso(ID3D12GraphicsCommandList* l, ID3D12PipelineState* pso) {
     if (!gArmed.load(std::memory_order_relaxed)) return;
-    ls(l).kind = kindOfPso(pso);
+    ls(l).row = rowOfPso(pso);
 }
 void onSetGraphicsCbv(ID3D12GraphicsCommandList* l, unsigned i, uint64_t va) {
     if (gArmed.load(std::memory_order_relaxed) && i < 8) ls(l).g[i] = va;
@@ -417,7 +423,7 @@ void onSetGraphicsCbv(ID3D12GraphicsCommandList* l, unsigned i, uint64_t va) {
 void beforeDraw(ID3D12GraphicsCommandList* l) {
     if (!gArmed.load(std::memory_order_relaxed)) return;
     LS& s = ls(l);
-    if (s.kind == Deferred || s.kind == Probe) patch(s.kind, s.g);
+    if (s.row >= 0 && !table::kRows[s.row].compute) patch(s.row, s.g);
 }
 void logStatus();
 int64_t nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
@@ -442,12 +448,11 @@ void logStatus() {
     std::string s = std::string("[RF] VV Live: ") + (gArmed.load() ? "patching" : "idle") + ", drive " + (d.on ? "on" : "off") + ", phase " + std::to_string(d.phase) +
                     ", deck top " + std::to_string(d.deckTop) + ", final " + std::to_string(d.closeIn) + ", pulse " + std::to_string(d.pulse) +
                     ", upload buffers " + std::to_string(gMapsSeen.load());
-    for (int k = 1; k < KindCount; ++k) {
+    for (int k = 0; k < GroupCount; ++k) {
         std::string why;
         { std::lock_guard l(gStatMx); why = gStat[k].why; }
-        s += std::string(" | ") + kKindName[k] + ": learned " + std::to_string(gLearned[k].load()) + ", pipelines " + std::to_string(gTagged[k].load()) + ", patched " +
-             std::to_string(gStat[k].patched.load()) + ", missed " + std::to_string(gStat[k].rejected.load()) + (why.empty() ? "" : " (" + why + ")") +
-             ", root " + std::to_string(gStat[k].idx.load()) + " +" + std::to_string(gStat[k].base.load());
+        s += std::string(" | ") + kGroupName[k] + ": pipelines " + std::to_string(gTagged[k].load()) + ", patched " + std::to_string(gStat[k].patched.load()) +
+             ", missed " + std::to_string(gStat[k].rejected.load()) + (why.empty() ? "" : " (" + why + ")");
     }
     ll_shim::info(s + " | match pass: " + rf::sky::worldFxVvStatus());
 }
@@ -476,11 +481,11 @@ void gui() {
     ImGui::Text("%s - driven by %s, phase %.2f, deck top y %.0f, final fight %.2f, pulse %.2f", gArmed.load() ? "patching" : "idle",
                 d.on ? "the Cloud Sea" : "no RF sky (Cloud Sea in VV turns it on)", d.phase, d.deckTop, d.closeIn, d.pulse);
     ImGui::Text("Upload buffers mapped: %ld", gMapsSeen.load());
-    for (int k = 1; k < KindCount; ++k) {
+    for (int k = 0; k < GroupCount; ++k) {
         std::string why;
         { std::lock_guard l(gStatMx); why = gStat[k].why; }
-        ImGui::Text("%s: %d shaders learned, %d pipelines, %ld patched, %ld missed%s%s", kKindName[k], gLearned[k].load(), gTagged[k].load(),
-                    gStat[k].patched.load(), gStat[k].rejected.load(), why.empty() ? "" : " - ", why.c_str());
+        ImGui::Text("%s: %d pipelines, %ld patched, %ld missed%s%s", kGroupName[k], gTagged[k].load(), gStat[k].patched.load(), gStat[k].rejected.load(),
+                    why.empty() ? "" : " - ", why.c_str());
     }
     ImGui::Text("Match pass (beacons, shards, kills): %s", rf::sky::worldFxVvStatus().c_str());
     if (rf::lab::vvTest()) ImGui::TextColored(ImVec4(1, .7f, .3f, 1), "Lab vvtest is on: off this session");

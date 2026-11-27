@@ -30,6 +30,7 @@ struct Drive {
     float deckThick = 30.0f;   // blocks over which the fog thickens down to full
     float pulse = 0.0f;        // 0..1: a bed just broke - the air takes that team's colour for a moment
     float pulseCol[3]{};       // that team's colour (linear)
+    float impact = 0.0f;       // a crit's impact frame: +1 the air goes white, -1 black, 0 none
     float closeIn = 0.0f;      // 0..1: the final fight (one bed / team left): the clouds rise and thicken
 };
 

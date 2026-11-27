@@ -2282,6 +2282,10 @@ static rf::vvlive::Drive vvDrive(MatchFrame const& m, float deckY) {
     at = now;
     close += (want - close) * std::min(1.0f, dt / 8.0f);
     d.closeIn = close;
+    // a crit's impact frame (the same event the pass draws it from): the air itself flips with the picture
+    for (int i = 0, ne = std::min(int(m.cb.m0[1]), 8); i < ne; ++i)
+        if (m.cb.m1[2] > 0.5f && m.cb.eB[i][3] > 7.5f && m.cb.eB[i][3] < 8.5f && m.cb.eC[i][2] > 1.1f && m.cb.eC[i][2] < 1.4f && m.cb.eA[i][3] >= 0.0f && m.cb.eA[i][3] <= 0.25f)
+            d.impact = m.cb.eA[i][3] < 0.125f ? 1.0f : -1.0f;   // white air, then black (the frame's two halves)
     return d;
 }
 void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
