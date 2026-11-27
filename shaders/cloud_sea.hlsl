@@ -10,6 +10,7 @@ cbuffer C : register(b0) {
     float4 c3; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c4; // xy = map centre (world xz: the towers keep clear of it), z = quality 0..1, w = match phase (0 golden, 1 dusk, 2 night)
     float4 c5; // Vibrant Visuals: x = far depth, y = HDR gain, z = 1 in VV (0 classic), w = top of the cloud deck's fog (world y)
+    float4 c6; // Vibrant Visuals: xy = the sun's compass direction (xz), zw = the moon's - the game's own, so VV's light and shadows line up with the sky
 };
 #define NG_ATMOS 2
 #define CS_NOISE_REG t0
@@ -41,6 +42,7 @@ float4 PSCloudSea(VSOut i) : SV_Target {
 // falling into the clouds reads like the geometry around you, which VV's volumetric fog already wraps.
 float4 PSCloudSeaVV(VSOut i) : SV_Target {
     CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy; ATMOS = c4.z >= 1.5 ? 1.0 : 0.0;
+    if (dot(c6.xy, c6.xy) > 0.5) { SUN_AZ = c6.xy; MOON_AZ = c6.zw; }
     csSetPhase(c4.w);
     QUALITY = c4.z - 2.0 * ATMOS;
     float3 rd  = normalize(i.dir);

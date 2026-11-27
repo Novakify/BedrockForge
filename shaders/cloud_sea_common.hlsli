@@ -32,8 +32,8 @@ static float  ATMOS = 0.0;
 #define NG_IS (false)
 #endif
 static float  LIGHTK = 1.0; // strength of the key light on the world: sun -> nothing at deep dusk -> moonlight
-static const float2 SUN_AZ = float2(0.17717, -0.98418);  // the sun's compass direction (xz)
-static const float2 MOON_AZ = float2(-0.85671, 0.51580); // the moon rises on the other side, over the south-west
+static float2 SUN_AZ = float2(0.17717, -0.98418);  // the sun's compass direction (xz)
+static float2 MOON_AZ = float2(-0.85671, 0.51580); // the moon rises on the other side, over the south-west
 float3 dirAzEl(float2 az, float el) { return float3(az.x * cos(el), sin(el), az.y * cos(el)); }
 void csSetPhase(float k) {
     PHASE = k;

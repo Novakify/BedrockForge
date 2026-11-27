@@ -1110,7 +1110,7 @@ bool makeWsRoot(ID3D12Device* dev) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
     D3D12_ROOT_PARAMETER   prm[2]{};
     prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    prm[0].Constants        = {0, 0, 24};   // c0..c5 (c5: Vibrant Visuals)
+    prm[0].Constants        = {0, 0, 28};   // c0..c6 (c5, c6: Vibrant Visuals)
     prm[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     prm[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     prm[1].DescriptorTable  = {1, &range};
@@ -2241,6 +2241,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
 void followLoadedAtmosphere();
 static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, GamePso const& g);
 static std::atomic<float> gVvSkyGain{1.0f};
+static float gVvAz[4] = {0.17717f, -0.98418f, -0.85671f, 0.51580f};   // sun xz, moon xz as the VV sky was just drawn (render thread)
 
 // Vibrant Visuals Live: what the Cloud Sea wants VV's own light, reflections and fog to be this frame (VvLive.cpp).
 // Colours are hues (VV keeps its own brightness and time of day); they follow the same three pictures as the sky
@@ -2554,7 +2555,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     double const* pos = snap.pos;
     updateAnchor(pos);
     float const t = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
-    float c[24]{};
+    float c[28]{};
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = t;
@@ -2573,13 +2574,19 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     gWorldPhase = mfs.phase, gWorldNovak = worldFxLook().glass > 0.0f;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
     {   // Vibrant Visuals Live: VV's own lighting / reflections / fog follow this sky and the match (VvLive.cpp)
         rf::vvlive::Drive dr = vvDrive(mfs, c[15]);
+        if (g.vv) {   // the Cloud Sea's sun and moon stand where the game's do: VV's real light and shadows fit the sky
+            float az[4];
+            rf::vvlive::sunAzimuth(az);
+            std::memcpy(gVvAz, az, sizeof az);
+            std::memcpy(c + 24, az, sizeof az);
+        }
         if (g.vv) { c[20] = g.farZ; c[21] = gVvSkyGain = rf::vvlive::skyGainNow(0.5f * (0.2126f * (dr.zen[0] + dr.hor[0]) + 0.7152f * (dr.zen[1] + dr.hor[1]) + 0.0722f * (dr.zen[2] + dr.hor[2]))); c[22] = 1.0f; c[23] = dr.on ? dr.deckTop : -1.0e6f; }
         rf::vvlive::setDrive(dr);
     }
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
-    calls.setConsts(list, 0, 24, c, 0);
+    calls.setConsts(list, 0, 28, c, 0);
     calls.setTable(list, 1, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
     calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -3861,7 +3868,8 @@ static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st
     MatchFrame const mf = matchFrame(look);
     // nothing of the match on screen (no teams, no events, no stars, no trails, no fireworks): the frame is VV's alone
     bool const any = mf.cb.m0[0] > 0.5f || mf.cb.m0[1] > 0.5f || mf.cb.m2[0] > 0.5f || mf.cb.m2[1] > 0.5f || mf.cb.m4[0] > 0.5f || mf.cb.m1[2] > 0.5f;
-    if (!any) return say("idle (nothing of the match to draw)");
+    bool const seaOver = gWorldSky.load(std::memory_order_relaxed) != 0 && look.glass <= 0.0f;   // Cloud Sea: the sea also covers the ground under the deck
+    if (!any && !seaOver) return say("idle (nothing of the match to draw)");
     bool const killsNow = look.kills && mf.cb.m0[1] > 0.5f && mf.cb.m1[2] > 0.5f;
     ID3D12PipelineState* pso = killsNow ? derived(dev.Get(), g, 26) : nullptr;
     if (!killsNow && look.kills) (void)derived(dev.Get(), g, 26);   // warm it up before the first kill needs it
@@ -3928,12 +3936,12 @@ static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
     c[12] = 0.025f; c[13] = 0.0f; c[14] = 0.0f; c[15] = flags;
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
-    c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = 0.0f;
-    c[26] = 0.0f; c[27] = mf.phase;
+    c[20] = gVvAz[0]; c[21] = gVvAz[1]; c[22] = gVvAz[2]; c[23] = 1.0f;   // VV: c5 = sun xz, moon x, flag; c6.x = moon z
+    c[24] = gVvAz[3]; c[26] = 0.0f; c[27] = mf.phase;
     c[28] = float(snap.pos[0]); c[29] = float(snap.pos[1]); c[30] = float(snap.pos[2]);
     deckOf(mf, c[31], c[32], c[33]);
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
-    c[35] = 0.0f; c[38] = gQuality.load(); c[39] = look.ink;
+    c[35] = seaOver ? 1.0f : 0.0f; c[38] = gQuality.load(); c[39] = look.ink;
     c[43] = std::max(gVvSkyGain.load(), 1e-5f);   // how bright "1.0" is in VV's HDR target (the gain the sky was just drawn with)
     gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
     { float const lp[3] = {float(snap.pos[0]), float(snap.pos[1]), float(snap.pos[2])}; rf::deathsfx::setListener(lp, snap.forward); }

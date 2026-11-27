@@ -2213,17 +2213,33 @@ float4 PSWorldFxVV(VSOut i) : SV_Target {
     int2   px = int2(i.pos.xy);
     float  d  = rawDepth(px);
     bool   sk = isSky(d);
+    if (c5.w > 0.5) { SUN_AZ = c5.xy; MOON_AZ = float2(c5.z, c6.x); }   // VV: the game's own sun / moon compass directions (as the sky pass)
     CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z;
     float3 P  = sk ? posAt(float2(px) + 0.5, 1.0) : posPx(px);
     float3 rd = normalize(P);
     float  t  = sk ? 1e9 : length(P);
     float3 hdr = hdrAt(px);
     float3 sd  = toDisplay(hdr / max(c10.w, 1e-4));
+    float3 base = sd;
+    bool   repl = false;   // the pixel is replaced outright (the cloud sea over it, an impact frame), not added to
+    // ---- the cloud sea is a real surface in VV too: ground below the deck goes under it, peaks rise out of it (the
+    //      same test and march as the classic pass - the sky draw only covers pixels that are still sky)
+    [branch] if (!sk && c8.w > 0.5 && !NG_IS) {
+        float  yTop = SEA_Y + SEA_AMP * 7.6;
+        float  tTop = rd.y < 0.0 ? (CAM.y - yTop) / -rd.y : 1e9;
+        if (CAM.y <= yTop) tTop = 0.0;
+        bool above = min(CAM.y, CAM.y + P.y) > seaTopAlong(CAM.xz, CAM.xz + P.xz);
+        if (rd.y < 0.02 && tTop < t && !above) {
+            float  tHit;
+            float4 sea = cloudSea(CAM, rd, t, tHit);
+            if (sea.a > 0.0 && tHit < t) { base = toDisplay(sea.rgb + csGlow(rd, 0.0)); t = tHit; repl = true; }
+        }
+    }
     float3 o;
-    [branch] if (m1.z > 0.5 && impactLive()) o = impactFrame(sd, rd, t);
-    else o = matchOver(sd, rd, t);
-    float3 dl = fromDisplay(o) - fromDisplay(sd);
-    if (dot(abs(o - sd), 1.0) < 1.0 / 512.0) discard;   // untouched: the game's own pixel stays, bit for bit
-    return float4(max(hdr + dl * c10.w, 0.0), 1.0);
+    [branch] if (m1.z > 0.5 && impactLive()) { o = impactFrame(base, rd, t); repl = true; }
+    else o = matchOver(base, rd, t);
+    if (!repl && dot(abs(o - sd), 1.0) < 1.0 / 512.0) discard;   // untouched: the game's own pixel stays, bit for bit
+    if (repl) return float4(fromDisplay(o) * c10.w, 1.0);
+    return float4(max(hdr + (fromDisplay(o) - fromDisplay(sd)) * c10.w, 0.0), 1.0);
 }
 #endif

@@ -54,8 +54,10 @@ struct Settings {
     float deckThk  = 30.0f;   // blocks over which it thins out to nothing at its top
     float rise     = 22.0f;   // the final fight: how far the clouds rise
     bool  pulse    = true;    // a bed breaks: the air takes its team's colour for a moment
-    float skyGain  = 1.0f;    // the Cloud Sea sky's brightness in VV's HDR target (with sky_auto: relative to the game's own sky)
-    bool  skyAuto  = true;    // follow the game's own sky brightness (auto-exposure, time of day)
+    float skyGain  = 0.42f;    // the Cloud Sea sky's brightness in VV's HDR target (with sky_auto: relative to the game's own sky)
+    bool  skyAuto  = false;
+    bool  sunFollow = true;   // RF's sun / moon stand at the game's compass directions (VV's shadows fit the sky)
+    bool  sunFlip   = false;  // the game's SunDir points away from the sun (set if the sky's sun shows up opposite the shadows)    // follow the game's own sky brightness (auto-exposure, time of day)
 } gSet;
 std::mutex gSetMx;
 fs::path   gConfig;
@@ -68,7 +70,7 @@ void saveConfig() {
     f << "# Renderer Foundation - Vibrant Visuals Live (F6 > Vibrant Visuals Live writes this file)\n"
       << "enabled " << (s.enabled ? 1 : 0) << "\nsky " << s.sky << "\nlight " << s.light << "\nair " << s.air << "\ndeck " << (s.deck ? 1 : 0)
       << "\ndeck_density " << s.deckExt << "\ndeck_thickness " << s.deckThk << "\nfinal_rise " << s.rise << "\npulse " << (s.pulse ? 1 : 0)
-      << "\nsky_gain " << s.skyGain << "\nsky_auto " << (s.skyAuto ? 1 : 0) << "\n";
+      << "\nsky_gain " << s.skyGain << "\nsky_auto " << (s.skyAuto ? 1 : 0) << "\nsun_follow " << (s.sunFollow ? 1 : 0) << "\nsun_flip " << (s.sunFlip ? 1 : 0) << "\n";
 }
 
 // ------------------------------------------------------------------ tagged pipelines
@@ -274,8 +276,8 @@ void patch(int row, uint64_t const* cbv) {
     { std::lock_guard l(gDriveMx); d = gDrive; }
     { std::lock_guard l(gSetMx); s = gSet; }
     auto f4 = [&](int role) { return reinterpret_cast<float*>(blk + L.off[role]); };
-    for (int r = 0; r <= R::AirAlbedo; ++r)
-        if (L.off[r] >= 0) {
+    for (int r = 0; r < R::RoleCount; ++r)
+        if (L.off[r] >= 0 && r != R::UView && r != R::UInvView) {
             float const* f = f4(r);
             for (int i = 0; i < 4; ++i) gRaw[r][i].store(f[i], std::memory_order_relaxed);
             gRawAt[r].store(gFrame.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
@@ -377,7 +379,8 @@ bool setKey(std::string const& k, float v) {   // gSetMx held
     if (k == "enabled") gSet.enabled = v != 0; else if (k == "sky") gSet.sky = v; else if (k == "light") gSet.light = v;
     else if (k == "air") gSet.air = v; else if (k == "deck") gSet.deck = v != 0; else if (k == "deck_density") gSet.deckExt = v;
     else if (k == "deck_thickness") gSet.deckThk = v; else if (k == "final_rise") gSet.rise = v; else if (k == "pulse") gSet.pulse = v != 0;
-    else if (k == "sky_gain") gSet.skyGain = v; else if (k == "sky_auto") gSet.skyAuto = v != 0; else return false;
+    else if (k == "sky_gain") gSet.skyGain = v; else if (k == "sky_auto") gSet.skyAuto = v != 0;
+    else if (k == "sun_follow") gSet.sunFollow = v != 0; else if (k == "sun_flip") gSet.sunFlip = v != 0; else return false;
     return true;
 }
 } // namespace
@@ -477,9 +480,9 @@ void logStatus() {
         s += std::string(" | ") + kGroupName[k] + ": pipelines " + std::to_string(gTagged[k].load()) + ", patched " + std::to_string(gStat[k].patched.load()) +
              ", missed " + std::to_string(gStat[k].rejected.load()) + (why.empty() ? "" : " (" + why + ")");
     }
-    static char const* const kRole[] = {"zen", "hor", "sun", "moon", "dirLight", "skyAmb", "fogCol", "heightFog", "airAlbedo"};
+    static char const* const kRole[] = {"zen", "hor", "sun", "moon", "dirLight", "skyAmb", "fogCol", "heightFog", "airAlbedo", "", "", "sunDir", "moonDir", "dirLightDir"};
     s += " | game values:";
-    for (int r = 0; r <= R::AirAlbedo; ++r)
+    for (int r = 0; r < R::RoleCount; ++r)
         if (gRawAt[r].load()) {
             char b[160];
             snprintf(b, sizeof b, " %s %.4g %.4g %.4g %.4g;", kRole[r], gRaw[r][0].load(), gRaw[r][1].load(), gRaw[r][2].load(), gRaw[r][3].load());
@@ -489,6 +492,23 @@ void logStatus() {
 }
 bool  active() { return gArmed.load(std::memory_order_relaxed); }
 float skyGain() { std::lock_guard l(gSetMx); return gSet.skyGain; }
+void sunAzimuth(float out[4]) {
+    static float last[4] = {0.17717f, -0.98418f, -0.85671f, 0.51580f};   // the classic Cloud Sea's own
+    Settings s;
+    { std::lock_guard l(gSetMx); s = gSet; }
+    uint64_t const fr = gFrame.load(std::memory_order_relaxed) + 1;
+    if (!s.sunFollow) { out[0] = 0.17717f; out[1] = -0.98418f; out[2] = -0.85671f; out[3] = 0.51580f; return; }
+    if (gRawAt[R::SunDir].load() != 0 && gRawAt[R::SunDir].load() + 30 > fr) {
+        float x = gRaw[R::SunDir][0].load(), z = gRaw[R::SunDir][2].load();
+        float const l = std::sqrt(x * x + z * z);
+        if (l > 0.05f) {   // (straight overhead: keep the last one)
+            x /= l, z /= l;
+            if (s.sunFlip) x = -x, z = -z;
+            last[0] = x, last[1] = z, last[2] = -x, last[3] = -z;   // the game's moon is opposite its sun
+        }
+    }
+    std::memcpy(out, last, sizeof last);
+}
 /// The brightness RF's sky is drawn with in VV's HDR target. VV's frame is in scene units and the game's auto-exposure
 /// follows the time of day, so a fixed number is right at one hour only: with sky_auto the sky is drawn as bright as
 /// the game's own sky would have been this frame (its zenith / horizon uniforms, read before RF recolours them),
@@ -515,6 +535,8 @@ void gui() {
     changed |= ImGui::Checkbox("On", &s.enabled);
     changed |= ImGui::SliderFloat("Cloud Sea sky brightness (VV)", &s.skyGain, 0.01f, 1000.0f, "%.3g", ImGuiSliderFlags_Logarithmic);
     changed |= ImGui::Checkbox("... relative to the game's own sky (follows auto-exposure)", &s.skyAuto);
+    changed |= ImGui::Checkbox("Sun and moon where the game's are (VV's shadows fit the sky)", &s.sunFollow);
+    changed |= ImGui::Checkbox("... flipped", &s.sunFlip);
     changed |= ImGui::SliderFloat("Sky colours -> VV light + reflections", &s.sky, 0.0f, 1.0f);
     changed |= ImGui::SliderFloat("Sun / moon light colour", &s.light, 0.0f, 1.0f);
     changed |= ImGui::SliderFloat("Fog colour", &s.air, 0.0f, 1.0f);
