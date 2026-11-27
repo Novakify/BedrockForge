@@ -348,8 +348,13 @@ void onChange(ll::event::BlockChangedEvent& ev) {
     std::string const& pn = prev.getTypeName();
     std::string const& nn = next.getTypeName();
     if (!seen) return;
-    if (near && !boring(pn) && nn == "minecraft:air") pushEvent(ev.blockSource(), p.x, p.y, p.z, 1, prev);
-    else if (pn == "minecraft:air" && !boring(nn)) pushEvent(ev.blockSource(), p.x, p.y, p.z, 2, next);
+    // (Fernando 2026-11-27: "the weird pink hue keeps happening especially when there are a lot of players, FFA
+    //  SkyWars") every block anyone placed in view made a lavender cloud puff, every block broken a burst of shards:
+    //  with a full lobby bridging that's a constant pink-purple shimmer. Only your own building now (within reach).
+    float const mx = float(p.x) + 0.5f - gMe[0], my = float(p.y) + 0.5f - (gMe[1] + 1.62f), mz = float(p.z) + 0.5f - gMe[2];
+    bool const mineB = mx * mx + my * my + mz * mz < 8.0f * 8.0f;
+    if (mineB && near && !boring(pn) && nn == "minecraft:air") pushEvent(ev.blockSource(), p.x, p.y, p.z, 1, prev);
+    else if (mineB && pn == "minecraft:air" && !boring(nn)) pushEvent(ev.blockSource(), p.x, p.y, p.z, 2, next);
 }
 
 // ---- kills. A remote server only tells the client two things: a chat line ("FINAL KILL! a eliminated b", "b was
@@ -467,7 +472,15 @@ int myDye() { // your team: the bed by where you arrived
         }
     return d;
 }
+bool gKillMine = false;   // the kill message being handled names you (your kill / your death)
 void pushKill(Gone const& g0, bool fin) {
+    // (Fernando 2026-11-27, FFA SkyWars: "the weird pink hue keeps happening, a lot of players") every death anywhere
+    // lit the ground round the body in the victim's name colour (pink / magenta with no team). Kill moments only for
+    // your kills, your deaths, and deaths right by you now.
+    if (!g0.local && !gKillMine && g0.name.rfind("test", 0) != 0) {
+        double const kx = g0.pos[0] - gMe[0], ky = g0.pos[1] - gMe[1], kz = g0.pos[2] - gMe[2];
+        if (kx * kx + ky * ky + kz * kz > 10.0 * 10.0) return;
+    }
     static std::string lastName;
     static int64_t     lastAt = 0;
     int64_t const      t0 = nowMs();
@@ -501,6 +514,7 @@ void pushKill(Gone const& g0, bool fin) {
 void matchKills(int64_t now) {
     for (auto k = gKills.begin(); k != gKills.end();) {
         bool done = false;
+        gKillMine = k->you;
         // the named player who jumped away / vanished around the line is the victim, where they stood before
         for (auto g = gGone.begin(); g != gGone.end() && !done; ++g) {
             if (std::llabs(g->at - k->at) > 2500) continue;
@@ -519,6 +533,7 @@ void matchKills(int64_t now) {
             pushKill(passive ? k->cands.front() : k->cands.back(), k->fin);
             done = true;
         }
+        gKillMine = false;
         if (done || now - k->at > 2500) k = gKills.erase(k);
         else ++k;
     }
@@ -1356,7 +1371,10 @@ void onText(std::string const& m) {
                 Gone v = passive ? kl.cands.front() : kl.cands.back();
                 for (auto const& g : gGone) // they were already moved (respawn / spectator): where they stood before
                     if (g.name == v.name && g.local == v.local && kl.at - g.at < 2500) { v.pos[0] = g.pos[0], v.pos[1] = g.pos[1], v.pos[2] = g.pos[2]; }
+                gKillMine = false;
+                for (auto const& c : kl.cands) gKillMine |= c.local;
                 pushKill(v, kl.fin);
+                gKillMine = false;
                 for (auto const& c : kl.cands) // you got the kill: a beat for you
                     if (c.local && !v.local) {
                         float const at[3] = {c.pos[0], c.pos[1], c.pos[2]};
