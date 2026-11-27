@@ -419,6 +419,7 @@ void beforeDraw(ID3D12GraphicsCommandList* l) {
     LS& s = ls(l);
     if (s.kind == Deferred || s.kind == Probe) patch(s.kind, s.g);
 }
+void logStatus();
 int64_t nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 std::atomic<int64_t> gDriveAt{0};
 void setDrive(Drive const& d) {
@@ -431,6 +432,24 @@ void onPresent() {
     // no RF sky drew for half a second (switched off, a menu, the classic renderer): stop patching
     if (nowMs() - gDriveAt.load() > 500) { std::lock_guard l(gDriveMx); gDrive.on = false; }
     rearm();
+    static int64_t lastLog = 0;
+    static int     logs = 0;
+    if (logs < 30 && nowMs() - gDriveAt.load() < 500 && nowMs() - lastLog > 10000) { lastLog = nowMs(); ++logs; logStatus(); }
+}
+void logStatus() {
+    Drive d;
+    { std::lock_guard l(gDriveMx); d = gDrive; }
+    std::string s = std::string("[RF] VV Live: ") + (gArmed.load() ? "patching" : "idle") + ", drive " + (d.on ? "on" : "off") + ", phase " + std::to_string(d.phase) +
+                    ", deck top " + std::to_string(d.deckTop) + ", final " + std::to_string(d.closeIn) + ", pulse " + std::to_string(d.pulse) +
+                    ", upload buffers " + std::to_string(gMapsSeen.load());
+    for (int k = 1; k < KindCount; ++k) {
+        std::string why;
+        { std::lock_guard l(gStatMx); why = gStat[k].why; }
+        s += std::string(" | ") + kKindName[k] + ": learned " + std::to_string(gLearned[k].load()) + ", pipelines " + std::to_string(gTagged[k].load()) + ", patched " +
+             std::to_string(gStat[k].patched.load()) + ", missed " + std::to_string(gStat[k].rejected.load()) + (why.empty() ? "" : " (" + why + ")") +
+             ", root " + std::to_string(gStat[k].idx.load()) + " +" + std::to_string(gStat[k].base.load());
+    }
+    ll_shim::info(s + " | match pass: " + rf::sky::worldFxVvStatus());
 }
 bool  active() { return gArmed.load(std::memory_order_relaxed); }
 float skyGain() { std::lock_guard l(gSetMx); return gSet.skyGain; }

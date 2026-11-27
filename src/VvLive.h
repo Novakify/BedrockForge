@@ -44,6 +44,7 @@ void setDrive(Drive const& d);
 void onPresent();                                                          // once per frame
 void gui();                                                                // F6 section
 float skyGain();                                                           // the Cloud Sea sky's brightness in VV's HDR target
+void logStatus();                                                          // one status block into the log (config/Test.txt: vv)
 bool active();                                                             // patching right now (status)
 
 } // namespace rf::vvlive

@@ -165,6 +165,8 @@ void pollAtmos() {
                 std::filesystem::rename(tf, gAtmosFile.parent_path() / "Test.done.txt", ec);
                 while (!c.empty() && (c.back() == '\r' || c.back() == ' ')) c.pop_back();
                 if (c == "kill") testKill(); else if (c == "impact") testImpact(); else if (c == "win") testVictory(); else if (c == "bed") testBed();
+                else if (c.rfind("phase ", 0) == 0) { try { worldFxLook().phase = std::stof(c.substr(6)); } catch (...) {} }   // sky phase preview: 0 golden .. 2 night, -1 = the match again
+                else if (c == "vv") rf::vvlive::logStatus();
                 ll_shim::info("[RF] test: " + c);
             }
         }
