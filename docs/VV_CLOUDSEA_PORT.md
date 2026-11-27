@@ -178,3 +178,50 @@ Design notes:
 - Storm is motion and flashes: things tear, streak and flicker with the lightning; colours desaturate between strikes.
 - Implementation: one shared "sky state" (phase + eclipse + storm weights) sent to every effect - the sky shader,
   the match layer, VV Live and the item / block looks - so they can never drift apart.
+
+### I. Animation (added Nov 26, 23:47) - everything still follows the sky (H)
+Levers, from safest to newest:
+- **Flipbook textures** (`flipbook_textures.json`): proven in Fernando's packs (Blue Lock team blocks), work on Hive as
+  a client pack. Even frame counts or it flickers. In VV the MERS / height maps can be flipbooks too - theory, test it.
+- **Attachables** (held items, armor): the Cloud Sea weapons already use them; their geometry can carry looping
+  animations. Proven lever.
+- **RF match layer**: already draws beds (Figura / cosmetic beds), shards, kills in VV - anything there can move.
+- **VV block materials rebuilt with lazurite** (lz126x round-trips the game's materials byte-exact): a real vertex
+  sway / ripple in VV's own block shader. Biggest reach, most risk (game updates) - theory, last.
+
+Blocks
+37. **Drifting cloud wool.** The wool's texture slowly drifts like a cloud seen up close (a 16-32 frame flipbook,
+    ~8 s loop, tiny movement - calm, not busy). Day: sunlit billows. Night: the drift slows, a faint moonlit shimmer
+    crosses it. Storm: faster, darker. Main Hive blocks only (wool, planks, concrete, stone) so the map stays readable.
+38. **Breathing team blocks.** Team wool / concrete glow pulses very slowly (one breath every ~4 s), brighter at
+    night, off in daylight. Flipbook on the MERS emissive channel - theory.
+39. **Cloud place animation** (already agreed idea): a small cloud puffs out and settles into the block in ~0.15 s,
+    fast enough for speed bridging. RF match layer (block-place events already reach RF).
+40. **Leaves and grass in the wind** in VV: the classic Cloud Sea already sways them; VV needs the lazurite material
+    route. Storm = strong gusts, night = barely moving.
+
+Weapons and armor
+41. **Living sunstone.** A slow light wave runs up the blade (flipbook glow), like heat shimmer by day and a
+    moonbeam sliding along it at night. During the eclipse it stops dead; in the storm it crackles.
+42. **Idle hover on held items.** In first person the weapon floats and breathes very slightly when you're standing
+    still (attachable idle animation). Off the moment you move or swing - never in the way of PvP.
+43. **Enchant glint as moving cloud light.** The glint becomes soft cloud shadows sweeping across the item by day,
+    silver moonlight ripples at night.
+44. **Armor trims that flow.** Gold / rose-gold edges on the Cloud Sea armor shimmer slowly, like sunlight moving
+    over water; at night they turn into a cool silver flow.
+
+Bows and arrows
+45. **Bow string glow while drawing** builds with the charge (attachable animation + flipbook), and the limbs bend
+    with a faint light along them. Sun-gold by day, moon-silver at night.
+46. **Arrows that spin a wisp** of cloud as they fly (the contrail from 32, animated with a slow twist).
+
+Beds (Hive beds are entities - the bed you see is drawn; RF already draws its own beds in the match layer)
+47. **Cloud beds that breathe.** The bed's blanket rises and falls slowly, a little cloud curling off the pillow;
+    by night the blanket glows faintly in the team colour so you can admire your base from across the map.
+48. **Bed under attack.** While enemies are at your bed (BF already knows: `threat`), the cloud around it darkens
+    and churns - looks only, the same info Hive already shows you in chat.
+49. **Bed break.** The bed collapses into a cloud that blows away over the void, the team-colour light going out
+    with it (RF already plays a bed fall; this is its Cloud Sea version).
+
+Limits to respect: no animation that changes a block's or item's shape the server knows (hitboxes stay vanilla);
+keep everything slow and subtle on the blocks you fight on - motion pulls the eye, and PvP needs a calm screen.
