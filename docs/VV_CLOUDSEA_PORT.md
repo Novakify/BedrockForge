@@ -28,7 +28,22 @@ BF `cloudsea-vv/bf`. Test build kept on the PC as `mods/RendererFoundation/Rende
 4. Not ported: haze / mist / ambience, motion blur, the menu panorama grab in VV (they read an 8-bit frame).
 5. Art-director passes on real frames (none done yet), then merge both branches into the live lines.
 
-## Facts learned today (corrections to VV_TESTED.md)
+
+## Nov 27 session (in game)
+- **Exposure probe works.** Golden hour, dusk and the moonlit night all read right with one setting (sky_gain 12).
+  Sheet: Research/VibrantVisuals/captures (vv_cloudsea_phases.jpg).
+- **VV Live colour patches land** (proved with `set debug 1`: the ambient on the blocks turns the debug magenta).
+- **Night**: the bright moon sky pulled VV's exposure down; fixed by a dimmer night sky (night_sky 0.12) plus
+  moonlight x4 / ambient x2. Dark blocks (planks, stone) are still moody at night - VV's look, not a bug.
+- **Bed break in VV**: beacon, Figura bed, shockwave ring, pieces, team-colour air pulse all seen. FPS 127-170 during it.
+- **White "+" flakes** = vanilla snow (rain turns to snow at that height). Not ours. Test world now doWeatherCycle false.
+- **Cloud-deck fog (VV Live fog volume): NOT working.** The writes land in the buffer the Populate shader reads
+  (values confirmed in the log), but no visible change even at 100x density. Under investigation; next step is a PIX
+  capture of PopulateVolume to see what it actually reads. The pack's own fog works (seen as haze).
+  The RF cloud sea already covers everything under the deck, so this only matters when you fall into it.
+- Still unverified: crit impact frame (0.25 s), final-fight rising clouds, kill animation recheck at the new exposure.
+
+## Facts learned (Nov 26, corrections to VV_TESTED.md)
 - Fog `max_density` is capped at 1.0 by the schema (1.6 invalidated the whole fog file). Thickness comes from the
   scattering coefficients. The earlier "a deck needs 1-3" was wrong.
 - Fog heights in the pack are plain world y; the engine's HeightFogScaleBias = (-1/T, (zero - cameraY)/T).
