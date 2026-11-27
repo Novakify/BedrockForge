@@ -56,11 +56,11 @@ struct Settings {
     bool  pulse    = true;    // a bed breaks: the air takes its team's colour for a moment
     float skyGain  = 12.0f;   // (with the exposure probe: the sky against the world - calibrated in game Nov 27)    // the Cloud Sea sky's brightness in VV's HDR target (with sky_auto: relative to the game's own sky)
     bool  skyAuto  = false;
-    bool  probe    = true;
-    float nightLight = 4.0f;
-    float nightSky = 0.12f;
-    float nightAmb = 2.0f;    // the sky's ambient light at night: x night_light x this (shaded faces under the moon)   // the sky's brightness at night x this: VV's auto-exposure then opens up and the moonlit world reads
-    int   debug    = 0;       // 1: loud test colours (sky green / horizon magenta, light red, fog blue + thick) - proves each patch lands  // the moonlit night: the moon's light on the world x this (the Cloud Sea's night is never really dark)    // expose RF's sky / match layer with the game's own average luminance (VV pre-exposes its frame)
+    bool  probe    = true;    // expose RF's sky / match layer with the game's own average luminance (VV pre-exposes its frame)
+    float nightLight = 4.0f;  // the moonlit night: the moon's light on the world x this (the Cloud Sea's night is never really dark)
+    float nightSky = 0.12f;   // the sky's brightness at night x this: VV's auto-exposure then opens up and the moonlit world reads
+    float nightAmb = 2.0f;    // the sky's ambient light at night: x night_light x this (shaded faces under the moon)
+    int   debug    = 0;       // 1: loud test colours (sky green / horizon magenta, light red, fog blue + thick) - proves each patch lands
     bool  sunFollow = true;   // RF's sun / moon stand at the game's compass directions (VV's shadows fit the sky)
     bool  sunFlip   = false;  // the game's SunDir points away from the sun (set if the sky's sun shows up opposite the shadows)    // follow the game's own sky brightness (auto-exposure, time of day)
 } gSet;
