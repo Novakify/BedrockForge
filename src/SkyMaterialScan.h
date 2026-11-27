@@ -36,7 +36,8 @@ inline bool identChar(uint8_t c, bool first) {
 
 inline std::vector<Shader> scan(uint8_t const* d, size_t n) {
     static constexpr std::string_view kPasses[] = {"ForwardPBRTransparent", "ForwardPBRTransparentSkyProbe", "DepthOnlyAlphaTest",
-                                                   "MotionOnly",            "Opaque",                        "DoDeferredShading"};
+                                                   "MotionOnly",            "Opaque",                        "DoDeferredShading",
+                                                    "Populate"};   // PopulateVolume (VV Live)
     struct Str { size_t at; std::string_view s; };
     std::vector<Str> strs;
     for (size_t i = 0; i + 4 < n;) {

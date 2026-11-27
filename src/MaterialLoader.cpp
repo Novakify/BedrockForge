@@ -1,5 +1,6 @@
 // Renderer Foundation - MaterialBinLoader for 1.26 (see MaterialLoader.h, Notice.h).
 #include "MaterialLoader.h"
+#include "VvLive.h"
 
 #include <algorithm>
 #include <atomic>
@@ -211,6 +212,7 @@ void install(fs::path const& modDir) {
     gState.store(std::make_shared<State const>(State{data, {}, (modDir / "cache" / "rp").wstring()}));
     setShaderpack(RfOptions::shaderPack.get());
     rf::sky::learnGameMaterials(fs::path(exe).parent_path() / "data" / "renderer" / "materials", modDir.parent_path()); // before any hook
+    rf::vvlive::learn(fs::path(exe).parent_path() / "data" / "renderer" / "materials");   // VV Live: lighting / sky probe / fog volume
 
     auto& log = ll::mod::NativeMod::current()->getLogger();
     if (HMODULE kb = GetModuleHandleW(L"KernelBase.dll")) {

@@ -2,6 +2,7 @@
 #include <chrono>
 #include "Panorama.h"
 #include "UiCapture.h"
+#include "VvLive.h"
 #include "Dred.h"
 
 #include <algorithm>
@@ -411,6 +412,7 @@ HRESULT STDMETHODCALLTYPE createGpsHook(ID3D12Device* d, D3D12_GRAPHICS_PIPELINE
             ID3D12PipelineState* gp = nullptr;
             if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&gp))) && gp) {
                 rf::glassarmor::notePso(gp, *desc, h);
+                rf::vvlive::onCreatedGraphicsPso(gp, h);   // Vibrant Visuals Live: VV's lighting / sky-probe passes
                 gp->Release(); // only used as a key
             }
         }
@@ -509,6 +511,7 @@ bool panelActive() {
 void STDMETHODCALLTYPE setPsoHook(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
     reinterpret_cast<SetPso_t>(gOrig[3])(list, pso);
     if (gInSnapshot) return;
+    rf::vvlive::onSetPso(list, pso);
     if (rf::glassarmor::tracking()) rf::glassarmor::onSetPso(list, pso);
     if (rf::worldfx::tracking()) rf::worldfx::onSetPso(list, pso);
     if (rf::sky::wanted()) { // lock-free: refresh the cached kind only when this list's PSO changes
@@ -717,6 +720,7 @@ void STDMETHODCALLTYPE setConstsHook(ID3D12GraphicsCommandList* l, UINT i, UINT 
 template <int Hook, int Type>
 void STDMETHODCALLTYPE setAddrHook(ID3D12GraphicsCommandList* l, UINT i, D3D12_GPU_VIRTUAL_ADDRESS v) {
     reinterpret_cast<SetAddr_t>(gOrig[Hook])(l, i, v);
+    if constexpr (Hook == 18) rf::vvlive::onSetGraphicsCbv(l, i, v);   // root CBV: where VV's pass reads its uniforms
     if (!rootTracking()) return;
     std::lock_guard g(gMutex);
     auto& a = gListRoot[l].args[i];
@@ -1016,6 +1020,7 @@ void STDMETHODCALLTYPE clearRtvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_D
 }
 
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
+    if (!gInSnapshot) rf::vvlive::beforeDraw(list);
     rf::sky::GameState st;
     ListIa             ia;
     bool               orig = true;
@@ -1032,6 +1037,7 @@ void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b,
     if (sk >= 2) afterSky(list, st, ia, sk);
 }
 void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
+    if (!gInSnapshot) rf::vvlive::beforeDraw(list);
     rf::sky::GameState st;
     ListIa             ia;
     bool               orig = true;

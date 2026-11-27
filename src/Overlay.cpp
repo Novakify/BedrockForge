@@ -2,6 +2,7 @@
 #include <thread>
 #include <chrono>
 #include "Dred.h"
+#include "VvLive.h"
 #include "D3D12Api.h"
 #include "Overlay.h"
 #include "SpatialConfigScreen.h"
@@ -409,6 +410,7 @@ void onPresent(IDXGISwapChain* sc) {
 std::atomic_bool gFaulted{false};
 void safePresent(IDXGISwapChain* sc) {
     rf::sky::lookDownFrameTick();
+    rf::vvlive::onPresent();
     __try {
         onPresent(sc);
     } __except (EXCEPTION_EXECUTE_HANDLER) {

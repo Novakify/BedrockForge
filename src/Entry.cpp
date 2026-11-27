@@ -1,5 +1,6 @@
 // Renderer Foundation - LeviLamina entry point (replaces BetterRenderDragon's dllmain.cpp; see Notice.h).
 #include "ll/api/mod/NativeMod.h"
+#include "VvLive.h"
 #include "ll/api/mod/RegisterHelper.h"
 
 #include "Cinematic.h"
@@ -35,6 +36,7 @@ public:
         log.info("{} {} (fork of {}) for MC {} - AGPL-3.0, source: see README", RF_NAME, RF_VERSION, RF_BASED_ON, RF_TARGET_VERSION);
         lab::init(mSelf.getConfigDir()); // config/Lab.txt: VV test session / PIX capturer - first, before any D3D12 hook
         RfOptions::init(mSelf.getConfigDir());
+        vvlive::loadConfig(mSelf.getConfigDir()); // config/VvLive.txt: Vibrant Visuals Live
         RfOptions::load();
         materials::install(mSelf.getModDir()); // before the renderer opens its materials
         uicapture::init(mSelf.getConfigDir(), mSelf.getModDir() / "logs" / "uicapture");

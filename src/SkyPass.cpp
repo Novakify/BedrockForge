@@ -6,6 +6,7 @@
 #include "Panorama.h"
 #include "D3D12Api.h"
 #include "SkyPass.h"
+#include "VvLive.h"
 
 #include <cstddef>
 #include <deque>
@@ -692,6 +693,7 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
 }
 
 void drawUi() {
+    rf::vvlive::gui();   // its own F6 section: Vibrant Visuals Live (+ the Cloud Sea sky's VV brightness)
     if (!ImGui::CollapsingHeader("LyricsFlow sky (preview)")) return;
     ImGui::TextDisabled("Port of LyricsFlow 2.1's sky by 374m - personal build. Pick a sky in the L panel (Sky tab).");
     ImGui::TextDisabled("Stage 1: drawn over the frame from BF's camera, not yet in place of Bedrock's sky.");
@@ -1105,7 +1107,7 @@ bool makeWsRoot(ID3D12Device* dev) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
     D3D12_ROOT_PARAMETER   prm[2]{};
     prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    prm[0].Constants        = {0, 0, 20};
+    prm[0].Constants        = {0, 0, 24};   // c0..c5 (c5: Vibrant Visuals)
     prm[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     prm[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     prm[1].DescriptorTable  = {1, &range};
@@ -1176,14 +1178,16 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     wsStatus("ready - waiting for the game's sky draw");
 }
 
-ComPtr<ID3D12PipelineState> makeWsPso(ID3D12Device* dev, GamePso const& g) {
+ComPtr<ID3D12PipelineState> makeWsPso(ID3D12Device* dev, GamePso const& g, bool vv = false) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!gWsRoot) return out;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
     d.pRootSignature = gWsRoot.Get();
     d.VS = {rf::worldfx::shaders::VSCloudSea, sizeof rf::worldfx::shaders::VSCloudSea};
-    d.PS = {rf::worldfx::shaders::PSCloudSea, sizeof rf::worldfx::shaders::PSCloudSea};
+    d.PS = vv ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSCloudSeaVV, sizeof rf::worldfx::shaders::PSCloudSeaVV}
+              : D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSCloudSea, sizeof rf::worldfx::shaders::PSCloudSea};
+    if (vv) vvDepth(d, g);   // Vibrant Visuals: only pixels still at the far plane (nothing drawn there = sky)
     for (UINT i = 0; i < 8; ++i) {
         auto& rt = d.BlendState.RenderTarget[i];
         rt.RenderTargetWriteMask = i == 0 ? D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE : 0;
@@ -1362,7 +1366,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
         } else
             // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
             made.push_back({key, which == 22 ? makeWfxPso(d.Get(), g, false, 0, false, false, false, false, true) : which == 20 ? makeWfxPso(d.Get(), g, false, 0, false, false, true, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
-                                            : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
+                                            : which == 4 ? makeWsPso(d.Get(), g) : which == 24 ? makeWsPso(d.Get(), g, true) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -2198,6 +2202,51 @@ static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
 
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void followLoadedAtmosphere();
+
+// Vibrant Visuals Live: what the Cloud Sea wants VV's own light, reflections and fog to be this frame (VvLive.cpp).
+// Colours are hues (VV keeps its own brightness and time of day); they follow the same three pictures as the sky
+// shader (cloud_sea_common.hlsli skyDay / skyTwilight / skyNight): golden hour -> dusk -> moonlit night.
+static rf::vvlive::Drive vvDrive(MatchFrame const& m, float deckY) {
+    rf::vvlive::Drive d;
+    WorldFxLook const look = worldFxLook();
+    d.on    = gWorldSky.load(std::memory_order_relaxed) != 0 && look.glass <= 0.0f;   // Cloud Sea (Novak Glass: not yet)
+    d.phase = m.phase;
+    auto ss  = [](float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); };
+    float const dusk = ss(0.0f, 1.0f, m.phase), night = ss(1.15f, 1.9f, m.phase);
+    auto mix3 = [&](float* o, float const* g, float const* k, float const* n) {
+        for (int i = 0; i < 3; ++i) { float const a = g[i] + (k[i] - g[i]) * dusk; o[i] = a + (n[i] - a) * night; }
+    };
+    static constexpr float zenG[3] = {0.036f, 0.042f, 0.135f}, zenD[3] = {0.022f, 0.028f, 0.110f}, zenN[3] = {0.0042f, 0.0075f, 0.027f};
+    static constexpr float horG[3] = {0.62f, 0.22f, 0.10f},    horD[3] = {0.30f, 0.13f, 0.17f},    horN[3] = {0.033f, 0.050f, 0.110f};
+    static constexpr float keyG[3] = {1.00f, 0.60f, 0.32f},    keyD[3] = {1.00f, 0.45f, 0.30f},    keyN[3] = {0.62f, 0.76f, 1.00f};
+    static constexpr float airG[3] = {1.00f, 0.82f, 0.62f},    airD[3] = {0.95f, 0.68f, 0.66f},    airN[3] = {0.62f, 0.72f, 1.00f};
+    mix3(d.zen, zenG, zenD, zenN); mix3(d.hor, horG, horD, horN); mix3(d.key, keyG, keyD, keyN); mix3(d.air, airG, airD, airN);
+    d.deckTop   = deckY + 28.0f;   // the sea's base + its swell (SEA_AMP 24) + a little: the fog ends where the cloud tops do
+    d.deckThick = 30.0f;
+    // a bed that just broke: the air flashes its team's colour across the map and fades (the newest one wins)
+    int alive = 0, teams = int(m.cb.m0[0]);
+    float bestAge = 1e9f;
+    for (int k = 0; k < std::min(teams, 16); ++k) {
+        float const age = m.cb.tAge[k][0];
+        if (age < 0.0f) { ++alive; continue; }
+        if (age < 3.5f && age < bestAge) {
+            bestAge = age;
+            float const up = std::clamp(age / 0.15f, 0.0f, 1.0f);
+            d.pulse = up * std::exp(-std::max(0.0f, age - 0.15f) * 1.1f);
+            for (int i = 0; i < 3; ++i) d.pulseCol[i] = std::max(0.02f, m.cb.tCol[k][i]);
+        }
+    }
+    // the final fight: one bed left (or none), eased in over ~8 s so the clouds visibly climb
+    static float  close = 0.0f;
+    static int64_t at = 0;
+    int64_t const now = steadyMs();
+    float const want = teams >= 2 && alive <= 1 ? 1.0f : 0.0f;
+    float const dt = at ? std::clamp(float(now - at) / 1000.0f, 0.0f, 0.25f) : 0.0f;
+    at = now;
+    close += (want - close) * std::min(1.0f, dt / 8.0f);
+    d.closeIn = close;
+    return d;
+}
 void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (gWorldSky.load(std::memory_order_relaxed)) {
@@ -2449,7 +2498,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
         if (it == gGame.end()) return false;
         g = it->second;
     }
-    if (g.vv) { wsStatus("Vibrant Visuals is on: the Cloud Sea draws on the classic renderer for now (turn VV off)"); return false; }
+    if (g.vv && (g.dsv == DXGI_FORMAT_UNKNOWN || !g.dss.DepthEnable)) { wsStatus("Vibrant Visuals: the vanilla sun / star pass has no depth buffer - can't find the sky pixels"); return false; }
     if (!st.rootKnown) { wsStatus("waiting for the game's root state"); return false; }
     if (!gWsTexUp.load()) return false;
     auto    snap = rf::lyrics::camera();
@@ -2457,25 +2506,37 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wsStatus("waiting for the game camera"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
-    ID3D12PipelineState* pso = derived(dev.Get(), g, 4);
+    ID3D12PipelineState* pso = derived(dev.Get(), g, g.vv ? 24 : 4);
     if (!pso) { wsStatus("building the sky pipeline (in the background)"); return false; }
     double const* pos = snap.pos;
     updateAnchor(pos);
     float const t = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
-    float c[20]{};
+    float c[24]{};
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = t;
     c[12] = float(pos[0]); c[13] = float(pos[1]); c[14] = float(pos[2]);
+    if (g.vv && gTestBedReq.exchange(0)) {   // F6 test bed in Vibrant Visuals (classic: the World FX pass takes it)
+        float fx = snap.forward[0], fz = snap.forward[2], fl = std::sqrt(fx * fx + fz * fz);
+        if (fl < 1e-3f) fx = 0, fz = 1, fl = 1;
+        gTestBed.p[0] = float(pos[0]) + fx / fl * 3.5f; gTestBed.p[2] = float(pos[2]) + fz / fl * 3.5f; gTestBed.p[1] = float(pos[1]) - 1.62f;
+        gTestBed.yaw = std::atan2(fx, -fz);
+        gTestBed.at = steadyMs();
+    }
     MatchFrame const mfs = matchFrame(worldFxLook());
     deckOf(mfs, c[15], c[16], c[17]);
     c[18] = gQuality.load() + (worldFxLook().glass > 0.0f ? 2.0f : 0.0f); c[19] = mfs.phase;
     gNovakPhase = worldFxLook().glass > 0.0f ? std::clamp(mfs.phase * 0.5f, 0.0f, 1.0f) : -1.0f;
     gWorldPhase = mfs.phase, gWorldNovak = worldFxLook().glass > 0.0f;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
+    {   // Vibrant Visuals Live: VV's own lighting / reflections / fog follow this sky and the match (VvLive.cpp)
+        rf::vvlive::Drive dr = vvDrive(mfs, c[15]);
+        if (g.vv) { c[20] = g.farZ; c[21] = rf::vvlive::skyGain(); c[22] = 1.0f; c[23] = dr.on ? dr.deckTop : -1.0e6f; }
+        rf::vvlive::setDrive(dr);
+    }
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
-    calls.setConsts(list, 0, 20, c, 0);
+    calls.setConsts(list, 0, 24, c, 0);
     calls.setTable(list, 1, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
     calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -3839,7 +3900,7 @@ int         worldSky() { return gWorldSky.load(); }
 void        setWorldSkyDeck(float o) { gDeckOffset = o; }
 float       worldSkyDeck() { return gDeckOffset.load(); }
 std::string worldSkyStatus() { std::lock_guard l(gWsMutex); return gWsStatus; }
-bool vvWanted() { return gUi.vv && gWorldSky.load(std::memory_order_relaxed) == 0; }
+bool vvWanted() { return gUi.vv; }   // the Cloud Sea / Novak Glass draw in Vibrant Visuals too (drawWorldSky)
 bool claimVvFrame() {
     uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
     return gVvClaimed.exchange(now) != now;

@@ -7,6 +7,7 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 dxc = args[0] if args else "dxc"
 check = "--check" in sys.argv
 entries = [("shaders/cloud_sea.hlsl", "VSCloudSea", "vs_6_0"), ("shaders/cloud_sea.hlsl", "PSCloudSea", "ps_6_0"),
+           ("shaders/cloud_sea.hlsl", "PSCloudSeaVV", "ps_6_0"),   # Vibrant Visuals: the full sky in linear HDR
            ("shaders/worldfx_pass.hlsl", "VSWorldFx", "vs_6_0"), ("shaders/worldfx_pass.hlsl", "PSWorldFx", "ps_6_0"),
            ("shaders/worldfx_pass.hlsl", "PSWorldFx", "ps_6_0", "PSWorldFxGlass", ["NG_RIM=1"]),   # with the Novak Glass rim
            # the same two with the death scenes - bound only on frames where a kill is playing

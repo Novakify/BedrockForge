@@ -1,5 +1,6 @@
 // Renderer Foundation - Glass Armor M0 probe (see GlassArmor.h). Original code for Renderer Foundation.
 #include "GlassArmor.h"
+#include "VvLive.h"
 #include "Dred.h"
 #include "SkyPass.h"
 
@@ -549,7 +550,7 @@ HRESULT WINAPI createDeviceHook(IUnknown* adapter, D3D_FEATURE_LEVEL level, REFI
         if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&d))) && d) {
             ID3D12Device* none = nullptr;
             if (!gGameDev.compare_exchange_strong(none, d)) d->Release();   // keep the first one (with our reference)
-            else rf::dred::watch(d);
+            else { rf::dred::watch(d); rf::vvlive::onGameDevice(d); }   // VV Live: compute + Map hooks on the game's own device
         }
     }
     if (SUCCEEDED(hr) && out && *out && !gRsHooked.load()) {
