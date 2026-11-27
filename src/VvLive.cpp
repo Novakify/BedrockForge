@@ -57,7 +57,8 @@ struct Settings {
     float skyGain  = 12.0f;   // (with the exposure probe: the sky against the world - calibrated in game Nov 27)    // the Cloud Sea sky's brightness in VV's HDR target (with sky_auto: relative to the game's own sky)
     bool  skyAuto  = false;
     bool  probe    = true;
-    float nightLight = 3.0f;  // the moonlit night: the moon's light on the world x this (the Cloud Sea's night is never really dark)    // expose RF's sky / match layer with the game's own average luminance (VV pre-exposes its frame)
+    float nightLight = 3.0f;
+    int   debug    = 0;       // 1: loud test colours (sky green / horizon magenta, light red, fog blue + thick) - proves each patch lands  // the moonlit night: the moon's light on the world x this (the Cloud Sea's night is never really dark)    // expose RF's sky / match layer with the game's own average luminance (VV pre-exposes its frame)
     bool  sunFollow = true;   // RF's sun / moon stand at the game's compass directions (VV's shadows fit the sky)
     bool  sunFlip   = false;  // the game's SunDir points away from the sun (set if the sky's sun shows up opposite the shadows)    // follow the game's own sky brightness (auto-exposure, time of day)
 } gSet;
@@ -196,6 +197,7 @@ struct Stat { std::atomic<long> patched{0}, rejected{0}; std::string why; } gSta
 // the game's own values this frame, before RF touches them (per uniform role): what VV itself would have drawn with
 std::atomic<float> gRaw[R::RoleCount][4];
 std::atomic<uint64_t> gRawAt[R::RoleCount];
+std::atomic<float> gFogOut[3]{};   // what the fog volume got last (height scale, bias, extinction)
 std::atomic<int> gRowIdx[kRowCount], gRowBase[kRowCount];   // where each shader's uniforms were found (root CBV, byte offset); -1 unknown
 struct RowInit { RowInit() { for (auto& a : gRowIdx) a = -1; for (auto& a : gRowBase) a = -1; } } gRowInit;
 std::mutex gStatMx;
@@ -286,6 +288,11 @@ void patch(int row, uint64_t const* cbv) {
         }
     std::vector<std::pair<int, int>> dirty;   // (offset, bytes)
     auto hue = [&](int role, float const* t, float kk) { if (L.off[role] < 0) return; hueTo(f4(role), t, kk); dirty.push_back({L.off[role], 12}); };
+    if (s.debug) {   // loud, unmistakable colours: which patch lands shows on screen at once
+        static constexpr float G[3] = {0, 1, 0}, Mg[3] = {1, 0, 1}, Rd[3] = {1, 0, 0}, Bl[3] = {0, 0.3f, 1};
+        std::memcpy(d.zen, G, 12); std::memcpy(d.hor, Mg, 12); std::memcpy(d.key, Rd, 12); std::memcpy(d.air, Bl, 12);
+        s.sky = s.light = s.air = 1.0f; s.deckExt = std::max(s.deckExt, 0.3f);
+    }
     float amb[3];   // the light the sky itself gives: between its zenith and its horizon
     for (int i = 0; i < 3; ++i) amb[i] = d.zen[i] / std::max(lum(d.zen), 1e-5f) * 0.45f + d.hor[i] / std::max(lum(d.hor), 1e-5f) * 0.55f;
     hue(R::Zen, d.zen, s.sky);
@@ -325,6 +332,10 @@ void patch(int row, uint64_t const* cbv) {
             h[1] = (top - float(cam.pos[1])) / T;               // ... from nothing at the deck's top (y is camera-relative)
             dirty.push_back({L.off[R::HeightFog], 8});
         }
+    }
+    if (L.off[R::HeightFog] >= 0) {
+        float const* h = f4(R::HeightFog); float const* a = L.off[R::AirAlbedo] >= 0 ? f4(R::AirAlbedo) : h;
+        gFogOut[0] = h[0], gFogOut[1] = h[1], gFogOut[2] = a[3];
     }
     bool ok = true;
     for (auto [off, n] : dirty) ok = sehWrite(p + off, blk + off, size_t(n)) && ok;
@@ -388,7 +399,7 @@ bool setKey(std::string const& k, float v) {   // gSetMx held
     if (k == "enabled") gSet.enabled = v != 0; else if (k == "sky") gSet.sky = v; else if (k == "light") gSet.light = v;
     else if (k == "air") gSet.air = v; else if (k == "deck") gSet.deck = v != 0; else if (k == "deck_density") gSet.deckExt = v;
     else if (k == "deck_thickness") gSet.deckThk = v; else if (k == "final_rise") gSet.rise = v; else if (k == "pulse") gSet.pulse = v != 0;
-    else if (k == "sky_gain") gSet.skyGain = v; else if (k == "sky_auto") gSet.skyAuto = v != 0; else if (k == "probe") gSet.probe = v != 0; else if (k == "night_light") gSet.nightLight = v;
+    else if (k == "sky_gain") gSet.skyGain = v; else if (k == "sky_auto") gSet.skyAuto = v != 0; else if (k == "probe") gSet.probe = v != 0; else if (k == "night_light") gSet.nightLight = v; else if (k == "debug") gSet.debug = int(v);
     else if (k == "sun_follow") gSet.sunFollow = v != 0; else if (k == "sun_flip") gSet.sunFlip = v != 0; else return false;
     return true;
 }
@@ -497,6 +508,7 @@ void logStatus() {
             snprintf(b, sizeof b, " %s %.4g %.4g %.4g %.4g;", kRole[r], gRaw[r][0].load(), gRaw[r][1].load(), gRaw[r][2].load(), gRaw[r][3].load());
             s += b;
         }
+    { char b[120]; snprintf(b, sizeof b, " | fog written: scale %.4g bias %.4g ext %.4g", gFogOut[0].load(), gFogOut[1].load(), gFogOut[2].load()); s += b; }
     ll_shim::info(s + " | sky gain now " + std::to_string(skyGainNow(0.0f)) + " | match pass: " + rf::sky::worldFxVvStatus());
 }
 bool  active() { return gArmed.load(std::memory_order_relaxed); }
