@@ -597,7 +597,7 @@ void STDMETHODCALLTYPE setVbHook(ID3D12GraphicsCommandList* list, UINT start, UI
 void origSetPso(ID3D12GraphicsCommandList* l, ID3D12PipelineState* p) { reinterpret_cast<SetPso_t>(gOrig[3])(l, p); }
 void origSetRts(ID3D12GraphicsCommandList* l, size_t rt, size_t ds) {
     D3D12_CPU_DESCRIPTOR_HANDLE r{rt}, d{ds};
-    reinterpret_cast<OmSet_t>(gOrig[4])(l, 1, &r, FALSE, &d);
+    reinterpret_cast<OmSet_t>(gOrig[4])(l, 1, &r, FALSE, ds ? &d : nullptr);   // ds 0: no depth target
 }
 void origTopo(ID3D12GraphicsCommandList* l, int t) { reinterpret_cast<Topo_t>(gOrig[11])(l, D3D12_PRIMITIVE_TOPOLOGY(t)); }
 void origVb(ID3D12GraphicsCommandList* l, unsigned s, unsigned n, D3D12_VERTEX_BUFFER_VIEW const* v) { reinterpret_cast<SetVb_t>(gOrig[12])(l, s, n, v); }
@@ -966,6 +966,7 @@ void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa co
     st.vb        = ia.vb;
     st.rootKnown = rootKnown(list);
     rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
+    c.setRts = &origSetRts;   // (Vibrant Visuals exposure probe: one draw into a 1x1 target of RF's, then the game's targets back)
     gInSnapshot = true; // our calls bypass the hooks anyway; keep onDraw etc. out of it
     auto const t0 = std::chrono::steady_clock::now();
     if (kind == 2) rf::sky::afterGameSky(list, st, c);

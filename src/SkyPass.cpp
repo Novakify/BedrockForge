@@ -990,6 +990,8 @@ ComPtr<ID3D12Resource>       gWsNoise, gWsPuff, gWsSkins, gWsClips;
 std::deque<ComPtr<ID3D12Resource>> gSkinGrave; // replaced skin textures, kept while frames in flight may use them
 uint64_t                     gSkinGen = ~0ull;
 ComPtr<ID3D12RootSignature>  gWsRoot;
+ComPtr<ID3D12Resource>       gVvExpTex;   // Vibrant Visuals: 1x1 R32F, the game's average luminance (exposure probe)
+ComPtr<ID3D12DescriptorHeap> gVvExpRtv;
 ComPtr<ID3D12DescriptorHeap> gWsHeap;
 std::atomic<long>            gWsFrames{0};
 auto const                   gWsT0 = std::chrono::steady_clock::now();
@@ -1107,13 +1109,14 @@ ComPtr<ID3D12Resource> uploadLevels(ID3D12Device* dev, ID3D12GraphicsCommandList
 
 bool makeWsRoot(ID3D12Device* dev) {
     if (gWsRoot) return true;
-    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
+    D3D12_DESCRIPTOR_RANGE range[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0},    // t0 noise, t1 cloud tops
+                                       {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2, 0, 4}};   // t2 the game's average luminance (VV; heap slot 4)
     D3D12_ROOT_PARAMETER   prm[2]{};
     prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     prm[0].Constants        = {0, 0, 28};   // c0..c6 (c5, c6: Vibrant Visuals)
     prm[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     prm[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    prm[1].DescriptorTable  = {1, &range};
+    prm[1].DescriptorTable  = {2, range};
     prm[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC smp{};
     smp.Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -1150,7 +1153,7 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     for (auto& l : d->puff) lv.push_back(reinterpret_cast<uint8_t const*>(l.data()));
     gWsPuff = uploadLevels(dev, list, DXGI_FORMAT_R16_UNORM, 1024, 1024, 2, lv);
     if (!gWsNoise || !gWsPuff) { wsStatus("texture upload failed"); return; }
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};   // + slot 4: VV's average luminance
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gWsHeap)))) { wsStatus("descriptor heap failed"); return; }
     UINT const inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     auto       h   = gWsHeap->GetCPUDescriptorHandleForHeapStart();
@@ -1176,6 +1179,26 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
         h.ptr += inc;
         sv.Format = DXGI_FORMAT_R32_UINT; sv.Texture2D.MipLevels = 1;
         dev->CreateShaderResourceView(gWsClips.Get(), &sv, h);   // a null view if the upload failed: reads 0
+    }
+    {   // slot 4 (sky t2 / pass t6): the game's average luminance, copied each frame by the exposure probe (Vibrant Visuals)
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+        D3D12_RESOURCE_DESC   td{};
+        td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D, td.Width = 1, td.Height = 1, td.DepthOrArraySize = 1, td.MipLevels = 1;
+        td.Format = DXGI_FORMAT_R32_FLOAT, td.SampleDesc.Count = 1, td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        D3D12_CLEAR_VALUE cv{DXGI_FORMAT_R32_FLOAT, {0.18f, 0, 0, 0}};
+        D3D12_DESCRIPTOR_HEAP_DESC rh{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+        h.ptr += inc;
+        sv.Format = DXGI_FORMAT_R32_FLOAT; sv.Texture2D.MipLevels = 1;
+        if (SUCCEEDED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(&gVvExpTex))) &&
+            SUCCEEDED(dev->CreateDescriptorHeap(&rh, IID_PPV_ARGS(&gVvExpRtv)))) {
+            dev->CreateRenderTargetView(gVvExpTex.Get(), nullptr, gVvExpRtv->GetCPUDescriptorHandleForHeapStart());
+            D3D12_RESOURCE_BARRIER x{};
+            x.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            x.Transition.pResource = gVvExpTex.Get(), x.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            x.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET, x.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            list->ResourceBarrier(1, &x);
+            dev->CreateShaderResourceView(gVvExpTex.Get(), &sv, h);
+        } else { gVvExpTex.Reset(); dev->CreateShaderResourceView(nullptr, &sv, h); }   // a null view: reads 0 (never used: the flag stays off)
     }
     gWsTexUp = true;
     wsStatus("ready - waiting for the game's sky draw");
@@ -1246,7 +1269,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     prm[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
     prm[2].Descriptor       = {1, 0};
     prm[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures), t4 skins, t5 clips
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures), t4 skins, t5 clips, t6 VV's average luminance
     prm[3].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     prm[3].DescriptorTable  = {1, &range};
     prm[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1316,6 +1339,32 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
         wfxStatus(std::string("pipeline failed (hr=0x") + b + ")");
         out.Reset();
     }
+#else
+    (void)dev; (void)g;
+#endif
+    return out;
+}
+
+/// Vibrant Visuals exposure probe (shaders/vv_probe.hlsl): on the GAME's root signature of its sun / star pass, where
+/// the game has its 1x1 average-luminance texture bound at t0
+ComPtr<ID3D12PipelineState> makeVvProbePso(ID3D12Device* dev, GamePso const& g) {
+    ComPtr<ID3D12PipelineState> out;
+#if RF_HAVE_WORLDFX_SHADERS
+    if (!g.root) return out;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
+    d.pRootSignature = g.root.Get();
+    d.VS = {rf::worldfx::shaders::VSVvProbe, sizeof rf::worldfx::shaders::VSVvProbe};
+    d.PS = {rf::worldfx::shaders::PSVvProbe, sizeof rf::worldfx::shaders::PSVvProbe};
+    d.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    d.SampleMask                      = UINT_MAX;
+    d.RasterizerState.FillMode        = D3D12_FILL_MODE_SOLID;
+    d.RasterizerState.CullMode        = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable = FALSE;
+    d.PrimitiveTopologyType           = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.NumRenderTargets                = 1;
+    d.RTVFormats[0]                   = DXGI_FORMAT_R32_FLOAT;
+    d.SampleDesc.Count                = 1;
+    if (FAILED(dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&out)))) { ll_shim::warn("[RF] VV exposure probe: pipeline failed (the sky keeps a fixed brightness)"); out.Reset(); }
 #else
     (void)dev; (void)g;
 #endif
@@ -1402,7 +1451,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
             // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
-            made.push_back({key, which == 24 ? makeWsPso(d.Get(), g, true) : which == 25 || which == 26 ? makeWfxVvPso(d.Get(), g, which == 26) : which == 22 ? makeWfxPso(d.Get(), g, false, 0, false, false, false, false, true) : which == 20 ? makeWfxPso(d.Get(), g, false, 0, false, false, true, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+            made.push_back({key, which == 24 ? makeWsPso(d.Get(), g, true) : which == 25 || which == 26 ? makeWfxVvPso(d.Get(), g, which == 26) : which == 27 ? makeVvProbePso(d.Get(), g) : which == 22 ? makeWfxPso(d.Get(), g, false, 0, false, false, false, false, true) : which == 20 ? makeWfxPso(d.Get(), g, false, 0, false, false, true, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
                                             : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
@@ -2241,6 +2290,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
 void followLoadedAtmosphere();
 static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, GamePso const& g);
 static std::atomic<float> gVvSkyGain{1.0f};
+static bool gVvProbeOk = false;   // this frame's sky was exposed with the game's own average luminance (render thread)
 static float gVvAz[4] = {0.17717f, -0.98418f, -0.85671f, 0.51580f};   // sun xz, moon xz as the VV sky was just drawn (render thread)
 
 // Vibrant Visuals Live: what the Cloud Sea wants VV's own light, reflections and fog to be this frame (VvLive.cpp).
@@ -2583,6 +2633,32 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
         if (g.vv) { c[20] = g.farZ; c[21] = gVvSkyGain = rf::vvlive::skyGainNow(0.5f * (0.2126f * (dr.zen[0] + dr.hor[0]) + 0.7152f * (dr.zen[1] + dr.hor[1]) + 0.0722f * (dr.zen[2] + dr.hor[2]))); c[22] = 1.0f; c[23] = dr.on ? dr.deckTop : -1.0e6f; }
         rf::vvlive::setDrive(dr);
     }
+    gVvProbeOk = false;
+    if (g.vv && gVvExpTex && gVvExpRtv && calls.setRts && rf::vvlive::exposureProbe()) {
+        // the game's average luminance -> our 1x1 texture: one pixel drawn on the game's own root signature and bindings
+        // (nothing of the game's state is touched but the pipeline and the render targets, and both are put back)
+        size_t rt0 = 0, dsv0 = 0;
+        if (g.sample.Count == 1 && g.numRt == 1 && rf::worldfx::listTargets(list, rt0, dsv0))   // (one colour target: the only set RF can put back)
+            if (ID3D12PipelineState* pp = derived(dev.Get(), g, 27)) {
+                auto barrier = [&](D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
+                    D3D12_RESOURCE_BARRIER x{};
+                    x.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                    x.Transition.pResource = gVvExpTex.Get(), x.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                    x.Transition.StateBefore = from, x.Transition.StateAfter = to;
+                    list->ResourceBarrier(1, &x);
+                };
+                barrier(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                calls.setRts(list, gVvExpRtv->GetCPUDescriptorHandleForHeapStart().ptr, 0);
+                calls.setPso(list, pp);
+                calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                rf::dred::crumb(list, "VV exposure probe draw (game pso)", size_t(st.pso));
+                calls.draw(list, 3, 1, 0, 0);
+                calls.setRts(list, rt0, dsv0);
+                barrier(D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                gVvProbeOk = true;
+            }
+    }
+    if (g.vv && gVvProbeOk) c[22] = 2.0f;
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
@@ -3849,6 +3925,7 @@ static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st
     default: return say("depth format " + std::to_string(int(dd.Format)) + " not supported yet");
     }
     if (g.farZ < 0.5f) flags += 32;   // reversed Z (the vanilla sun / star pass compares GREATER)
+    if (gVvProbeOk) flags += 64;      // exposed with the game's average luminance (t6), like the sky just was
     auto    snap = rf::lyrics::camera();
     int64_t const now = steadyMs();
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) return say("waiting for the game camera");

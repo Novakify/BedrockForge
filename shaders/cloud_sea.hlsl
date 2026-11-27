@@ -9,13 +9,14 @@ cbuffer C : register(b0) {
     float4 c2; // xyz = camera up,      w = time (seconds)
     float4 c3; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c4; // xy = map centre (world xz: the towers keep clear of it), z = quality 0..1, w = match phase (0 golden, 1 dusk, 2 night)
-    float4 c5; // Vibrant Visuals: x = far depth, y = HDR gain, z = 1 in VV (0 classic), w = top of the cloud deck's fog (world y)
+    float4 c5; // Vibrant Visuals: x = far depth, y = HDR gain, z = 1 in VV, 2 with the exposure probe (0 classic), w = top of the cloud deck's fog (world y)
     float4 c6; // Vibrant Visuals: xy = the sun's compass direction (xz), zw = the moon's - the game's own, so VV's light and shadows line up with the sky
 };
 #define NG_ATMOS 2
 #define CS_NOISE_REG t0
 #define CS_PUFF_REG t1
 #include "cloud_sea_common.hlsli"
+Texture2D<float4> gVvAvgLum : register(t2);   // Vibrant Visuals: the game's average luminance (1x1, shaders/vv_probe.hlsl)
 
 struct VSOut { float4 pos : SV_Position; float3 dir : TEXCOORD0; };
 VSOut VSCloudSea(uint id : SV_VertexID) {
@@ -52,5 +53,7 @@ float4 PSCloudSeaVV(VSOut i) : SV_Target {
         float3 lit = lerp(float3(1.00, 0.72, 0.48), float3(0.30, 0.36, 0.52), NIGHT) * lerp(0.55, 0.20, DUSK);
         col = lerp(col, lit * (0.75 + 0.25 * saturate(dot(rd, LDIR) * 0.5 + 0.5)), inDeck * inDeck * (3.0 - 2.0 * inDeck));
     }
-    return float4(max(col, 0.0) * c5.y, 1.0);
+    // exposed like the game exposes its own pixels (c5.z = 2: the probe has this frame's value)
+    float e = c5.z > 1.5 ? 0.18 / max(gVvAvgLum.Load(int3(0, 0, 0)).r, 1e-6) + 1e-4 : 1.0;
+    return float4(max(col, 0.0) * (c5.y * e), 1.0);
 }

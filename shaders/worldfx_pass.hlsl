@@ -58,8 +58,14 @@ int2   clampPx(int2 p) { return clamp(p, int2(0, 0), int2(c4.xy) - 1); }
 #if WFX_VV
 // ---- Vibrant Visuals: the frame is linear HDR (pre-exposed) with VV's own depth buffer. c3.w = format flags:
 //      1 BGRA8, 2 RGBA16F, 4 R11G11B10F, 8 RGB10A2; 16 = depth is a 32-bit float, 32 = reversed Z (far = 0).
-//      c10.w = how bright "1.0" is in that target (the same gain the Cloud Sea sky is drawn with). The pass works in
+//      c10.w = how bright "1.0" is in that target (the same gain the Cloud Sea sky is drawn with); with flag 64 it
+//      is multiplied by the game's own exposure (gVvAvgLum, shaders/vv_probe.hlsl), like the sky. The pass works in
 //      display space like on the classic renderer; only what it ADDS goes back into the HDR frame (PSWorldFxVV).
+Texture2D<float4> gVvAvgLum : register(t6);
+float  vvGain() {
+    float e = (uint(c3.w) & 64u) ? 0.18 / max(gVvAvgLum.Load(int3(0, 0, 0)).r, 1e-6) + 1e-4 : 1.0;
+    return max(c10.w * e, 1e-6);
+}
 float  rawDepth(int2 p) {
     p = clampPx(p);
     uint f = uint(c3.w), v = gDepth.Load(uint(p.y) * uint(c4.w) + uint(p.x) * 4u);
@@ -89,7 +95,7 @@ float3 fromDisplay(float3 d) {   // the inverse of toDisplay (cloud_sea_common.h
     float3 k = max(y - 0.55, 0.0);
     return min(y, 0.55) + k / max(1.0 - k * 1.9, 0.02);
 }
-float4 sceneAt(int2 p) { return float4(toDisplay(hdrAt(p) / max(c10.w, 1e-4)), 1.0); }
+float4 sceneAt(int2 p) { return float4(toDisplay(hdrAt(p) / vvGain()), 1.0); }
 #else
 float  rawDepth(int2 p) { p = clampPx(p); return float(gDepth.Load(uint(p.y) * uint(c4.w) + uint(p.x) * 4u) & 0xFFFFFFu) / 16777215.0; }
 #endif
@@ -2219,7 +2225,8 @@ float4 PSWorldFxVV(VSOut i) : SV_Target {
     float3 rd = normalize(P);
     float  t  = sk ? 1e9 : length(P);
     float3 hdr = hdrAt(px);
-    float3 sd  = toDisplay(hdr / max(c10.w, 1e-4));
+    float  gn  = vvGain();
+    float3 sd  = toDisplay(hdr / gn);
     float3 base = sd;
     bool   repl = false;   // the pixel is replaced outright (the cloud sea over it, an impact frame), not added to
     // ---- the cloud sea is a real surface in VV too: ground below the deck goes under it, peaks rise out of it (the
@@ -2239,7 +2246,7 @@ float4 PSWorldFxVV(VSOut i) : SV_Target {
     [branch] if (m1.z > 0.5 && impactLive()) { o = impactFrame(base, rd, t); repl = true; }
     else o = matchOver(base, rd, t);
     if (!repl && dot(abs(o - sd), 1.0) < 1.0 / 512.0) discard;   // untouched: the game's own pixel stays, bit for bit
-    if (repl) return float4(fromDisplay(o) * c10.w, 1.0);
-    return float4(max(hdr + (fromDisplay(o) - fromDisplay(sd)) * c10.w, 0.0), 1.0);
+    if (repl) return float4(fromDisplay(o) * gn, 1.0);
+    return float4(max(hdr + (fromDisplay(o) - fromDisplay(sd)) * gn, 0.0), 1.0);
 }
 #endif

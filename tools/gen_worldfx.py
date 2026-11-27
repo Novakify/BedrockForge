@@ -13,6 +13,7 @@ entries = [("shaders/cloud_sea.hlsl", "VSCloudSea", "vs_6_0"), ("shaders/cloud_s
            # the same two with the death scenes - bound only on frames where a kill is playing
            ("shaders/worldfx_pass.hlsl", "PSWorldFx", "ps_6_0", "PSWorldFxKills", ["WFX_KILLS=1"]),
            ("shaders/worldfx_pass.hlsl", "PSWorldFx", "ps_6_0", "PSWorldFxGlassKills", ["NG_RIM=1", "WFX_KILLS=1"]),
+           ("shaders/vv_probe.hlsl", "VSVvProbe", "vs_6_0"), ("shaders/vv_probe.hlsl", "PSVvProbe", "ps_6_0"),   # VV: the game's exposure
            # Vibrant Visuals: the match's moments over VV's HDR frame (lean, and with the death scenes)
            ("shaders/worldfx_pass.hlsl", "PSWorldFxVV", "ps_6_0", "PSWorldFxVV", ["WFX_VV=1"]),
            ("shaders/worldfx_pass.hlsl", "PSWorldFxVV", "ps_6_0", "PSWorldFxVVKills", ["WFX_VV=1", "WFX_KILLS=1"]),

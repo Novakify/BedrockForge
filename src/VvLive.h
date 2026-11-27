@@ -47,6 +47,7 @@ void onPresent();                                                          // on
 void gui();                                                                // F6 section
 float skyGainNow(float ourSkyLum);                                         // the gain this frame (see VvLive.cpp)
 void  sunAzimuth(float out[4]);                                           // sun xz, moon xz for RF's sky: the game's own when known
+bool  exposureProbe();                                                     // setting: expose RF's sky with the game's own average luminance
 float skyGain();                                                           // the Cloud Sea sky's brightness in VV's HDR target
 void set(std::string const& key, float value);                              // config/Test.txt: set <key> <value>
 void logStatus();                                                          // one status block into the log (config/Test.txt: vv)
