@@ -2240,6 +2240,7 @@ static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void followLoadedAtmosphere();
 static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, GamePso const& g);
+static std::atomic<float> gVvSkyGain{1.0f};
 
 // Vibrant Visuals Live: what the Cloud Sea wants VV's own light, reflections and fog to be this frame (VvLive.cpp).
 // Colours are hues (VV keeps its own brightness and time of day); they follow the same three pictures as the sky
@@ -2572,7 +2573,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     gWorldPhase = mfs.phase, gWorldNovak = worldFxLook().glass > 0.0f;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
     {   // Vibrant Visuals Live: VV's own lighting / reflections / fog follow this sky and the match (VvLive.cpp)
         rf::vvlive::Drive dr = vvDrive(mfs, c[15]);
-        if (g.vv) { c[20] = g.farZ; c[21] = rf::vvlive::skyGain(); c[22] = 1.0f; c[23] = dr.on ? dr.deckTop : -1.0e6f; }
+        if (g.vv) { c[20] = g.farZ; c[21] = gVvSkyGain = rf::vvlive::skyGainNow(0.5f * (0.2126f * (dr.zen[0] + dr.hor[0]) + 0.7152f * (dr.zen[1] + dr.hor[1]) + 0.0722f * (dr.zen[2] + dr.hor[2]))); c[22] = 1.0f; c[23] = dr.on ? dr.deckTop : -1.0e6f; }
         rf::vvlive::setDrive(dr);
     }
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
@@ -3933,7 +3934,7 @@ static bool drawMatchPassVV(ID3D12GraphicsCommandList* list, GameState const& st
     deckOf(mf, c[31], c[32], c[33]);
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     c[35] = 0.0f; c[38] = gQuality.load(); c[39] = look.ink;
-    c[43] = std::max(rf::vvlive::skyGain(), 1e-4f);   // how bright "1.0" is in VV's HDR target
+    c[43] = std::max(gVvSkyGain.load(), 1e-5f);   // how bright "1.0" is in VV's HDR target (the gain the sky was just drawn with)
     gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
     { float const lp[3] = {float(snap.pos[0]), float(snap.pos[1]), float(snap.pos[2])}; rf::deathsfx::setListener(lp, snap.forward); }
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};

@@ -54,7 +54,8 @@ struct Settings {
     float deckThk  = 30.0f;   // blocks over which it thins out to nothing at its top
     float rise     = 22.0f;   // the final fight: how far the clouds rise
     bool  pulse    = true;    // a bed breaks: the air takes its team's colour for a moment
-    float skyGain  = 1.0f;    // the Cloud Sea sky's brightness in VV's HDR target
+    float skyGain  = 1.0f;    // the Cloud Sea sky's brightness in VV's HDR target (with sky_auto: relative to the game's own sky)
+    bool  skyAuto  = true;    // follow the game's own sky brightness (auto-exposure, time of day)
 } gSet;
 std::mutex gSetMx;
 fs::path   gConfig;
@@ -67,7 +68,7 @@ void saveConfig() {
     f << "# Renderer Foundation - Vibrant Visuals Live (F6 > Vibrant Visuals Live writes this file)\n"
       << "enabled " << (s.enabled ? 1 : 0) << "\nsky " << s.sky << "\nlight " << s.light << "\nair " << s.air << "\ndeck " << (s.deck ? 1 : 0)
       << "\ndeck_density " << s.deckExt << "\ndeck_thickness " << s.deckThk << "\nfinal_rise " << s.rise << "\npulse " << (s.pulse ? 1 : 0)
-      << "\nsky_gain " << s.skyGain << "\n";
+      << "\nsky_gain " << s.skyGain << "\nsky_auto " << (s.skyAuto ? 1 : 0) << "\n";
 }
 
 // ------------------------------------------------------------------ tagged pipelines
@@ -188,6 +189,9 @@ Drive             gDrive;
 std::mutex        gDriveMx;
 std::atomic<uint64_t> gFrame{0};
 struct Stat { std::atomic<long> patched{0}, rejected{0}; std::string why; } gStat[GroupCount];
+// the game's own values this frame, before RF touches them (per uniform role): what VV itself would have drawn with
+std::atomic<float> gRaw[R::RoleCount][4];
+std::atomic<uint64_t> gRawAt[R::RoleCount];
 std::atomic<int> gRowIdx[kRowCount], gRowBase[kRowCount];   // where each shader's uniforms were found (root CBV, byte offset); -1 unknown
 struct RowInit { RowInit() { for (auto& a : gRowIdx) a = -1; for (auto& a : gRowBase) a = -1; } } gRowInit;
 std::mutex gStatMx;
@@ -270,6 +274,12 @@ void patch(int row, uint64_t const* cbv) {
     { std::lock_guard l(gDriveMx); d = gDrive; }
     { std::lock_guard l(gSetMx); s = gSet; }
     auto f4 = [&](int role) { return reinterpret_cast<float*>(blk + L.off[role]); };
+    for (int r = 0; r <= R::AirAlbedo; ++r)
+        if (L.off[r] >= 0) {
+            float const* f = f4(r);
+            for (int i = 0; i < 4; ++i) gRaw[r][i].store(f[i], std::memory_order_relaxed);
+            gRawAt[r].store(gFrame.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        }
     std::vector<std::pair<int, int>> dirty;   // (offset, bytes)
     auto hue = [&](int role, float const* t, float kk) { if (L.off[role] < 0) return; hueTo(f4(role), t, kk); dirty.push_back({L.off[role], 12}); };
     float amb[3];   // the light the sky itself gives: between its zenith and its horizon
@@ -367,7 +377,7 @@ bool setKey(std::string const& k, float v) {   // gSetMx held
     if (k == "enabled") gSet.enabled = v != 0; else if (k == "sky") gSet.sky = v; else if (k == "light") gSet.light = v;
     else if (k == "air") gSet.air = v; else if (k == "deck") gSet.deck = v != 0; else if (k == "deck_density") gSet.deckExt = v;
     else if (k == "deck_thickness") gSet.deckThk = v; else if (k == "final_rise") gSet.rise = v; else if (k == "pulse") gSet.pulse = v != 0;
-    else if (k == "sky_gain") gSet.skyGain = v; else return false;
+    else if (k == "sky_gain") gSet.skyGain = v; else if (k == "sky_auto") gSet.skyAuto = v != 0; else return false;
     return true;
 }
 } // namespace
@@ -438,6 +448,7 @@ void beforeDraw(ID3D12GraphicsCommandList* l) {
     if (s.row >= 0 && !table::kRows[s.row].compute) patch(s.row, s.g);
 }
 void logStatus();
+float skyGainNow(float ourSkyLum);
 int64_t nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 std::atomic<int64_t> gDriveAt{0};
 void setDrive(Drive const& d) {
@@ -466,10 +477,34 @@ void logStatus() {
         s += std::string(" | ") + kGroupName[k] + ": pipelines " + std::to_string(gTagged[k].load()) + ", patched " + std::to_string(gStat[k].patched.load()) +
              ", missed " + std::to_string(gStat[k].rejected.load()) + (why.empty() ? "" : " (" + why + ")");
     }
-    ll_shim::info(s + " | match pass: " + rf::sky::worldFxVvStatus());
+    static char const* const kRole[] = {"zen", "hor", "sun", "moon", "dirLight", "skyAmb", "fogCol", "heightFog", "airAlbedo"};
+    s += " | game values:";
+    for (int r = 0; r <= R::AirAlbedo; ++r)
+        if (gRawAt[r].load()) {
+            char b[160];
+            snprintf(b, sizeof b, " %s %.4g %.4g %.4g %.4g;", kRole[r], gRaw[r][0].load(), gRaw[r][1].load(), gRaw[r][2].load(), gRaw[r][3].load());
+            s += b;
+        }
+    ll_shim::info(s + " | sky gain now " + std::to_string(skyGainNow(0.0f)) + " | match pass: " + rf::sky::worldFxVvStatus());
 }
 bool  active() { return gArmed.load(std::memory_order_relaxed); }
 float skyGain() { std::lock_guard l(gSetMx); return gSet.skyGain; }
+/// The brightness RF's sky is drawn with in VV's HDR target. VV's frame is in scene units and the game's auto-exposure
+/// follows the time of day, so a fixed number is right at one hour only: with sky_auto the sky is drawn as bright as
+/// the game's own sky would have been this frame (its zenith / horizon uniforms, read before RF recolours them),
+/// times sky_gain. ourSkyLum = the luminance of RF's sky at the same two places (0 = just report the game's side).
+float skyGainNow(float ourSkyLum) {
+    Settings s;
+    { std::lock_guard l(gSetMx); s = gSet; }
+    uint64_t const fr = gFrame.load(std::memory_order_relaxed) + 1;
+    bool const fresh = gRawAt[R::Zen].load() + 30 > fr && gRawAt[R::Hor].load() + 30 > fr && gRawAt[R::Zen].load() != 0;
+    if (!s.skyAuto || !fresh) return s.skyGain;
+    float z[3] = {gRaw[R::Zen][0].load(), gRaw[R::Zen][1].load(), gRaw[R::Zen][2].load()};
+    float h[3] = {gRaw[R::Hor][0].load(), gRaw[R::Hor][1].load(), gRaw[R::Hor][2].load()};
+    float const game = 0.5f * (lum(z) + lum(h));
+    if (ourSkyLum <= 0.0f) return game;
+    return s.skyGain * std::clamp(game / std::max(ourSkyLum, 1e-5f), 1e-4f, 1e4f);
+}
 
 void gui() {
     if (!ImGui::CollapsingHeader("Vibrant Visuals Live")) return;
@@ -479,6 +514,7 @@ void gui() {
     { std::lock_guard l(gSetMx); s = gSet; }
     changed |= ImGui::Checkbox("On", &s.enabled);
     changed |= ImGui::SliderFloat("Cloud Sea sky brightness (VV)", &s.skyGain, 0.01f, 1000.0f, "%.3g", ImGuiSliderFlags_Logarithmic);
+    changed |= ImGui::Checkbox("... relative to the game's own sky (follows auto-exposure)", &s.skyAuto);
     changed |= ImGui::SliderFloat("Sky colours -> VV light + reflections", &s.sky, 0.0f, 1.0f);
     changed |= ImGui::SliderFloat("Sun / moon light colour", &s.light, 0.0f, 1.0f);
     changed |= ImGui::SliderFloat("Fog colour", &s.air, 0.0f, 1.0f);

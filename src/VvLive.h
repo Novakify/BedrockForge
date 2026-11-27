@@ -45,6 +45,7 @@ void beforeDraw(ID3D12GraphicsCommandList* l);                             // Dr
 void setDrive(Drive const& d);
 void onPresent();                                                          // once per frame
 void gui();                                                                // F6 section
+float skyGainNow(float ourSkyLum);                                         // the gain this frame (see VvLive.cpp)
 float skyGain();                                                           // the Cloud Sea sky's brightness in VV's HDR target
 void set(std::string const& key, float value);                              // config/Test.txt: set <key> <value>
 void logStatus();                                                          // one status block into the log (config/Test.txt: vv)
