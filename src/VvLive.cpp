@@ -362,6 +362,21 @@ void learn(fs::path const& dir) {
                   " material files)" + (have ? "" : " - none: the game was updated, VV Live stays off until the table is regenerated"));
 }
 
+namespace {
+bool setKey(std::string const& k, float v) {   // gSetMx held
+    if (k == "enabled") gSet.enabled = v != 0; else if (k == "sky") gSet.sky = v; else if (k == "light") gSet.light = v;
+    else if (k == "air") gSet.air = v; else if (k == "deck") gSet.deck = v != 0; else if (k == "deck_density") gSet.deckExt = v;
+    else if (k == "deck_thickness") gSet.deckThk = v; else if (k == "final_rise") gSet.rise = v; else if (k == "pulse") gSet.pulse = v != 0;
+    else if (k == "sky_gain") gSet.skyGain = v; else return false;
+    return true;
+}
+} // namespace
+void set(std::string const& key, float value) {   // config/Test.txt "set <key> <value>": live tuning without the F6 panel
+    bool ok;
+    { std::lock_guard l(gSetMx); ok = setKey(key, value); }
+    if (ok) { saveConfig(); rearm(); }
+    ll_shim::info("[RF] VV Live: set " + key + " " + std::to_string(value) + (ok ? "" : " - unknown key"));
+}
 void loadConfig(fs::path const& configDir) {
     gConfig = configDir / "VvLive.txt";
     std::ifstream f(gConfig);
@@ -372,10 +387,7 @@ void loadConfig(fs::path const& configDir) {
         std::istringstream is(line);
         std::string k; float v;
         if (!(is >> k >> v) || k[0] == '#') continue;
-        if (k == "enabled") gSet.enabled = v != 0; else if (k == "sky") gSet.sky = v; else if (k == "light") gSet.light = v;
-        else if (k == "air") gSet.air = v; else if (k == "deck") gSet.deck = v != 0; else if (k == "deck_density") gSet.deckExt = v;
-        else if (k == "deck_thickness") gSet.deckThk = v; else if (k == "final_rise") gSet.rise = v; else if (k == "pulse") gSet.pulse = v != 0;
-        else if (k == "sky_gain") gSet.skyGain = v;
+        setKey(k, v);
     }
 }
 

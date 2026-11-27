@@ -167,6 +167,7 @@ void pollAtmos() {
                 if (c == "kill") testKill(); else if (c == "impact") testImpact(); else if (c == "win") testVictory(); else if (c == "bed") testBed();
                 else if (c.rfind("phase ", 0) == 0) { try { worldFxLook().phase = std::stof(c.substr(6)); } catch (...) {} }   // sky phase preview: 0 golden .. 2 night, -1 = the match again
                 else if (c == "vv") rf::vvlive::logStatus();
+                else if (c.rfind("set ", 0) == 0) { auto const sp = c.find(' ', 4); if (sp != std::string::npos) { try { rf::vvlive::set(c.substr(4, sp - 4), std::stof(c.substr(sp + 1))); } catch (...) {} } }
                 ll_shim::info("[RF] test: " + c);
             }
         }
