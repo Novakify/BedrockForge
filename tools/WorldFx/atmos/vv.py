@@ -16,7 +16,8 @@ Facts these values rest on (tested in game on 1.26.51, Research/VibrantVisuals/d
   * 1.26.51 has no data-driven VV defaults: routing a system replaces the engine's own values entirely
   * the horizon colour is also the colour distant terrain fades into; the sun's glow mixes it with the zenith's
   * the light's colour tints everything, the sun disc and water highlights included
-  * fog density is gentle: 0.35 reads as light haze - a deck needs 1-3
+  * fog: max_density 0.35 with scattering 0.12 reads as light haze; max_density tops out at 1.0 (schema), so a
+    thick deck is made with the scattering coefficients
   * colour temperature: lower K = warmer
   * packs are read once per game session: restart the game to see a change
 """
@@ -87,8 +88,10 @@ def cloudsea():
     # the cloud deck: thick at y 10 and below, gone by y 46 - Hive Bed Wars / Sky Wars islands float well above it.
     # Warm forward scattering: the low sun lights it from inside and throws rays through the haze over it.
     fs["volumetric"] = {
-        "density": {"air": {"max_density": 1.6, "max_density_height": 10.0, "zero_density_height": 46.0}},
-        "media_coefficients": {"air": {"scattering": [0.10, 0.09, 0.08], "absorption": [0.0, 0.004, 0.008]}},
+        # (max_density is capped at 1.0 by the game's schema - 1.6 failed validation and took the whole fog file with
+        #  it; how thick the deck is comes from the scattering coefficients instead)
+        "density": {"air": {"max_density": 1.0, "max_density_height": 10.0, "zero_density_height": 46.0}},
+        "media_coefficients": {"air": {"scattering": [0.22, 0.20, 0.18], "absorption": [0.0, 0.006, 0.012]}},
         "henyey_greenstein_g": {"air": {"henyey_greenstein_g": 0.80}},
     }
 
