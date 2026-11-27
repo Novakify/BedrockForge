@@ -109,3 +109,37 @@ low-health effects, hit slashes, effects on normal swings, footstep ripples, gen
 ### Suggested order once the port itself is done
 3 and 5 first (pure choreography on proven levers), then 7 (point lights: the biggest visual jump per effort),
 then 12 and 13 (the sea reacting to players), then 4 and 6 as the set pieces.
+
+### G. Blocks, weapons, bows / arrows (added Nov 26, 23:45)
+Rule for all of these: looks only, no information the vanilla player doesn't have (no aim lines, no seeing through
+walls) - Hive bans that and it isn't the point.
+
+Blocks
+24. **Sunlight through the cracks.** While you mine a block, its crack stages glow from inside like sun leaking
+    through (emissive MERS on the destroy-stage textures). Pack-only if VV accepts texture sets on destroy stages -
+    theory, quick to test.
+25. **Wool that breaks into weather.** A broken cloud-wool block bursts into a puff that drifts down, thins, and
+    sinks into the cloud sea instead of the classic shards (match layer already draws shards in VV).
+26. **Obsidian as black mirror.** Bed defence obsidian becomes polished black glass that reflects the Cloud Sea sky
+    (texture set: roughness ~0.05). Pack-only, proven lever.
+27. **End stone as moon rock.** Craters in the height map, faint silver subsurface at night. Pack-only.
+28. **Edge wisps.** Blocks at the void edge of an island trail thin cloud over the drop (fog shaped near island
+    edges - theory, same lever as C).
+
+Weapons
+29. **Blades that hold the real sky.** Porcelain / sunstone edges are metal in VV, so they reflect VV's sky probe -
+    which VV Live already recolours. Swing toward the sunset and the edge catches it. Mostly free once checked.
+30. **Crit contrail.** Crits only: the blade leaves a 0.3 s vapour streak lit by the sun, inverting with the impact
+    frame. (Normal swings stay clean.)
+31. **Tally stars.** Each final kill this match etches a tiny star into your weapon's glow; they reset next match.
+    Classic item shader can do it; VV needs the item material path - theory.
+
+Bows and arrows (BF already sends projectile trails; the VV match layer draws them)
+32. **Arrow contrails.** Arrows draw thin cloud contrails that linger ~1.5 s, drift with the wind and are lit by the
+    sun on one side; the edge takes the shooter's team colour.
+33. **Charge flare.** Drawing the bow builds a small glow at the arrow tip; full charge = a tiny sun flare. Needs the
+    bow's charge from BF (not sent yet).
+34. **Void shots ripple the sea.** An arrow that falls into the void lands as a ring spreading across the cloud tops
+    far below.
+35. **Pearl landing burst.** Ender pearl lands in a soft cloud burst that hangs a moment (pairs with idea 12).
+36. **Snowballs / eggs as cloud puffs.** Tiny puffs instead of the vanilla particles.
