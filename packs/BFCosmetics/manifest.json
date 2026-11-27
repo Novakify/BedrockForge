@@ -1,0 +1,29 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "BF Cosmetics",
+    "description": "Bedrock Forge 3D cosmetics by Novak: Knives (switched in the Right Shift menu, Cosmetics tab)",
+    "uuid": "5e7b1c2a-9d4f-4a61-8c3e-b0f2d6a9e471",
+    "version": [
+      0,
+      1,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "5e7b1c2a-9d4f-4a61-8c3e-b0f2d6a9e472",
+      "version": [
+        0,
+        1,
+        0
+      ]
+    }
+  ]
+}

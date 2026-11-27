@@ -1,0 +1,5 @@
+Cloud Sea by Novak
+
+Block, item and bed textures: Faithful 32x (Bedrock) by the Faithful team,
+https://faithfulpack.net - colour-graded for the Cloud Sea atmosphere, material ids added in alpha.
+License: https://faithfulpack.net/license (copy in FAITHFUL_LICENSE.txt)

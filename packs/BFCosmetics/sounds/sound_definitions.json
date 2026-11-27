@@ -1,0 +1,257 @@
+{
+ "format_version": "1.14.0",
+ "sound_definitions": {
+  "bfk.swish": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/swish1",
+     "volume": 0.55,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/swish2",
+     "volume": 0.55,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/swish3",
+     "volume": 0.55,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.swish.q": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/swish1",
+     "volume": 0.248,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/swish2",
+     "volume": 0.248,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/swish3",
+     "volume": 0.248,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.cut": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/cut1",
+     "volume": 0.7,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/cut2",
+     "volume": 0.7,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.cut.q": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/cut1",
+     "volume": 0.315,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/cut2",
+     "volume": 0.315,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.click": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/click1",
+     "volume": 0.5,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/click2",
+     "volume": 0.5,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.click.q": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/click1",
+     "volume": 0.225,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/click2",
+     "volume": 0.225,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.ring_spin": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/ring_spin",
+     "volume": 0.5,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.ring_spin.q": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/ring_spin",
+     "volume": 0.225,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.clack": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/clack1",
+     "volume": 0.55,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/clack2",
+     "volume": 0.55,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/clack3",
+     "volume": 0.55,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.clack.q": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/clack1",
+     "volume": 0.248,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/clack2",
+     "volume": 0.248,
+     "pitch": 1.0
+    },
+    {
+     "name": "sounds/bf_cosmetics/clack3",
+     "volume": 0.248,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.latch": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/latch",
+     "volume": 0.6,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.latch.q": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/latch",
+     "volume": 0.27,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.draw": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/draw",
+     "volume": 0.55,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.draw.q": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/draw",
+     "volume": 0.248,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.dagger_catch": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/dagger_catch",
+     "volume": 0.6,
+     "pitch": 1.0
+    }
+   ]
+  },
+  "bfk.dagger_catch.q": {
+   "category": "player",
+   "min_distance": 1.0,
+   "max_distance": 12.0,
+   "sounds": [
+    {
+     "name": "sounds/bf_cosmetics/dagger_catch",
+     "volume": 0.27,
+     "pitch": 1.0
+    }
+   ]
+  }
+ }
+}

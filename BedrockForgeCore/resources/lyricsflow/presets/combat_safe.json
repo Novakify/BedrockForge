@@ -1,0 +1,14 @@
+{
+  "name": "Combat Safe (modifier)",
+  "modifier": true,
+  "description": "Apply on top of any preset for Hive/CubeCraft: keeps the crosshair area clear, fades text near it, dims lyrics for a moment after hits, fewer lines.",
+  "settings": {
+    "combatSafe": true,
+    "keepOutDeg": 14,
+    "combatAlpha": 0.35,
+    "combatHoldMs": 2500,
+    "maxLines": 1,
+    "textOpacity": 0.85,
+    "lyricsDistance": 1.3
+  }
+}

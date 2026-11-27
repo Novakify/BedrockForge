@@ -1,0 +1,109 @@
+{
+ "format_version": "1.10.0",
+ "animations": {
+  "animation.bfk.hit_a.fx": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "particle_effects": {
+    "0.000": [
+     {
+      "effect": "spark",
+      "locator": "tip",
+      "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+     },
+     {
+      "effect": "cutflash",
+      "locator": "tip",
+      "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+     }
+    ]
+   }
+  },
+  "animation.bfk.hit_a.fxc": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "particle_effects": {
+    "0.000": {
+     "effect": "glint",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    },
+    "0.040": {
+     "effect": "spark",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    }
+   }
+  },
+  "animation.bfk.hit_a.snd": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "sound_effects": {
+    "0.000": {
+     "effect": "cut"
+    }
+   }
+  },
+  "animation.bfk.hit_a.sndq": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "sound_effects": {
+    "0.000": {
+     "effect": "cut_q"
+    }
+   }
+  },
+  "animation.bfk.hit_b.fx": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "particle_effects": {
+    "0.000": [
+     {
+      "effect": "spark",
+      "locator": "tip",
+      "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+     },
+     {
+      "effect": "cutflash",
+      "locator": "tip",
+      "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+     }
+    ]
+   }
+  },
+  "animation.bfk.hit_b.fxc": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "particle_effects": {
+    "0.000": {
+     "effect": "glint",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    },
+    "0.040": {
+     "effect": "spark",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    }
+   }
+  },
+  "animation.bfk.hit_b.snd": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "sound_effects": {
+    "0.000": {
+     "effect": "cut"
+    }
+   }
+  },
+  "animation.bfk.hit_b.sndq": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "sound_effects": {
+    "0.000": {
+     "effect": "cut_q"
+    }
+   }
+  }
+ }
+}
