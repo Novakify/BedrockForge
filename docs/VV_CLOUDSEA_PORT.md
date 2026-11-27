@@ -190,11 +190,11 @@ Levers, from safest to newest:
   sway / ripple in VV's own block shader. Biggest reach, most risk (game updates) - theory, last.
 
 Blocks
-37. **Drifting cloud wool.** The wool's texture slowly drifts like a cloud seen up close (a 16-32 frame flipbook,
-    ~8 s loop, tiny movement - calm, not busy). Day: sunlit billows. Night: the drift slows, a faint moonlit shimmer
-    crosses it. Storm: faster, darker. Main Hive blocks only (wool, planks, concrete, stone) so the map stays readable.
-38. **Breathing team blocks.** Team wool / concrete glow pulses very slowly (one breath every ~4 s), brighter at
-    night, off in daylight. Flipbook on the MERS emissive channel - theory.
+37. **Drifting cloud wool.** The wool's texture rolls and billows like a real cloud seen up close (16-32 frame
+    flipbook). Day: sunlit billows. Night: a moonlit shimmer crosses it. Storm: fast, dark, boiling. Every main Hive
+    block gets its own motion (wool, planks, concrete, stone), with the high-detail treatment on those four.
+38. **Breathing team blocks.** Team wool / concrete glow pulses (one breath every ~4 s), brighter at night, soft in
+    daylight. Flipbook on the MERS emissive channel - theory.
 39. **Cloud place animation** (already agreed idea): a small cloud puffs out and settles into the block in ~0.15 s,
     fast enough for speed bridging. RF match layer (block-place events already reach RF).
 40. **Leaves and grass in the wind** in VV: the classic Cloud Sea already sways them; VV needs the lazurite material
@@ -203,8 +203,8 @@ Blocks
 Weapons and armor
 41. **Living sunstone.** A slow light wave runs up the blade (flipbook glow), like heat shimmer by day and a
     moonbeam sliding along it at night. During the eclipse it stops dead; in the storm it crackles.
-42. **Idle hover on held items.** In first person the weapon floats and breathes very slightly when you're standing
-    still (attachable idle animation). Off the moment you move or swing - never in the way of PvP.
+42. **Idle hover on held items.** In first person the weapon floats and breathes when you're standing still
+    (attachable idle animation), settling as you move.
 43. **Enchant glint as moving cloud light.** The glint becomes soft cloud shadows sweeping across the item by day,
     silver moonlight ripples at night.
 44. **Armor trims that flow.** Gold / rose-gold edges on the Cloud Sea armor shimmer slowly, like sunlight moving
@@ -223,5 +223,5 @@ Beds (Hive beds are entities - the bed you see is drawn; RF already draws its ow
 49. **Bed break.** The bed collapses into a cloud that blows away over the void, the team-colour light going out
     with it (RF already plays a bed fall; this is its Cloud Sea version).
 
-Limits to respect: no animation that changes a block's or item's shape the server knows (hitboxes stay vanilla);
-keep everything slow and subtle on the blocks you fight on - motion pulls the eye, and PvP needs a calm screen.
+Limits: hitboxes stay vanilla (no animation changes a shape the server knows). Otherwise visuals come first
+(Fernando, Nov 26 23:47): go as bold, animated and alive as looks best - no "keep it calm for PvP" cap.
